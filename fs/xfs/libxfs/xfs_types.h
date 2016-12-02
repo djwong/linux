@@ -94,6 +94,11 @@ typedef __int64_t	xfs_sfiloff_t;	/* signed block number in a file */
 #define	XFS_ATTR_FORK	1
 #define	XFS_COW_FORK	2
 
+#define XFS_FORK_DESC \
+	{ XFS_DATA_FORK,	"data" }, \
+	{ XFS_ATTR_FORK,	"attr" }, \
+	{ XFS_COW_FORK,		"CoW" }
+
 /*
  * Min numbers of data/attr fork btree root pointers.
  */
