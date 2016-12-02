@@ -587,6 +587,21 @@ xfs_scrub_setup(
 			0, 0, 0, &sc->tp);
 }
 
+/* Set us up to check an AG header. */
+STATIC int
+xfs_scrub_setup_ag(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+
+	if (sm->sm_agno >= mp->m_sb.sb_agcount)
+		return -EINVAL;
+	return xfs_scrub_setup(sc, ip, sm, retry_deadlocked);
+}
+
 /* Scrubbing dispatch. */
 
 struct xfs_scrub_meta_fns {
@@ -599,6 +614,7 @@ struct xfs_scrub_meta_fns {
 
 static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup, xfs_scrub_dummy, NULL, NULL},
+	{xfs_scrub_setup_ag, xfs_scrub_superblock, NULL, NULL},
 };
 
 /* Dispatch metadata scrubbing. */
