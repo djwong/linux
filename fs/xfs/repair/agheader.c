@@ -398,3 +398,99 @@ out:
 }
 #undef XFS_SCRUB_AGFL_OP_ERROR_GOTO
 #undef XFS_SCRUB_AGFL_CHECK
+
+/* AGI */
+
+#define XFS_SCRUB_AGI_CHECK(fs_ok) \
+	XFS_SCRUB_CHECK(sc, sc->sa.agi_bp, "AGI", fs_ok)
+#define XFS_SCRUB_AGI_OP_ERROR_GOTO(error, label) \
+	XFS_SCRUB_OP_ERROR_GOTO(sc, sc->sm->sm_agno, \
+			XFS_AGI_BLOCK(sc->tp->t_mountp), "AGI", error, label)
+/* Scrub the AGI. */
+int
+xfs_scrub_agi(
+	struct xfs_scrub_context	*sc)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+	struct xfs_agi			*agi;
+	xfs_daddr_t			daddr;
+	xfs_daddr_t			eofs;
+	xfs_agnumber_t			agno;
+	xfs_agblock_t			agbno;
+	xfs_agblock_t			eoag;
+	xfs_agino_t			agino;
+	xfs_agino_t			first_agino;
+	xfs_agino_t			last_agino;
+	int				i;
+	int				level;
+	int				error = 0;
+
+	agno = sc->sm->sm_agno;
+	error = xfs_scrub_load_ag_headers(sc, agno, XFS_SCRUB_TYPE_AGI);
+	XFS_SCRUB_AGI_OP_ERROR_GOTO(&error, out);
+
+	agi = XFS_BUF_TO_AGI(sc->sa.agi_bp);
+	eofs = XFS_FSB_TO_BB(mp, mp->m_sb.sb_dblocks);
+
+	/* Check the AG length */
+	eoag = be32_to_cpu(agi->agi_length);
+	XFS_SCRUB_AGI_CHECK(eoag == xfs_scrub_ag_blocks(mp, agno));
+
+	/* Check btree roots and levels */
+	agbno = be32_to_cpu(agi->agi_root);
+	daddr = XFS_AGB_TO_DADDR(mp, agno, agbno);
+	XFS_SCRUB_AGI_CHECK(agbno > XFS_AGI_BLOCK(mp));
+	XFS_SCRUB_AGI_CHECK(agbno < mp->m_sb.sb_agblocks);
+	XFS_SCRUB_AGI_CHECK(agbno < eoag);
+	XFS_SCRUB_AGI_CHECK(daddr < eofs);
+
+	level = be32_to_cpu(agi->agi_level);
+	XFS_SCRUB_AGI_CHECK(level > 0);
+	XFS_SCRUB_AGI_CHECK(level <= XFS_BTREE_MAXLEVELS);
+
+	if (xfs_sb_version_hasfinobt(&mp->m_sb)) {
+		agbno = be32_to_cpu(agi->agi_free_root);
+		daddr = XFS_AGB_TO_DADDR(mp, agno, agbno);
+		XFS_SCRUB_AGI_CHECK(agbno > XFS_AGI_BLOCK(mp));
+		XFS_SCRUB_AGI_CHECK(agbno < mp->m_sb.sb_agblocks);
+		XFS_SCRUB_AGI_CHECK(agbno < eoag);
+		XFS_SCRUB_AGI_CHECK(daddr < eofs);
+
+		level = be32_to_cpu(agi->agi_free_level);
+		XFS_SCRUB_AGI_CHECK(level > 0);
+		XFS_SCRUB_AGI_CHECK(level <= XFS_BTREE_MAXLEVELS);
+	}
+
+	/* Check inode counters */
+	first_agino = XFS_OFFBNO_TO_AGINO(mp, XFS_AGI_BLOCK(mp) + 1, 0);
+	last_agino = XFS_OFFBNO_TO_AGINO(mp, eoag + 1, 0) - 1;
+	agino = be32_to_cpu(agi->agi_count);
+	XFS_SCRUB_AGI_CHECK(agino <= last_agino - first_agino + 1);
+	XFS_SCRUB_AGI_CHECK(agino >= be32_to_cpu(agi->agi_freecount));
+
+	/* Check inode pointers */
+	agino = be32_to_cpu(agi->agi_newino);
+	if (agino != NULLAGINO) {
+		XFS_SCRUB_AGI_CHECK(agino >= first_agino);
+		XFS_SCRUB_AGI_CHECK(agino <= last_agino);
+	}
+	agino = be32_to_cpu(agi->agi_dirino);
+	if (agino != NULLAGINO) {
+		XFS_SCRUB_AGI_CHECK(agino >= first_agino);
+		XFS_SCRUB_AGI_CHECK(agino <= last_agino);
+	}
+
+	/* Check unlinked inode buckets */
+	for (i = 0; i < XFS_AGI_UNLINKED_BUCKETS; i++) {
+		agino = be32_to_cpu(agi->agi_unlinked[i]);
+		if (agino == NULLAGINO)
+			continue;
+		XFS_SCRUB_AGI_CHECK(agino >= first_agino);
+		XFS_SCRUB_AGI_CHECK(agino <= last_agino);
+	}
+
+out:
+	return error;
+}
+#undef XFS_SCRUB_AGI_CHECK
+#undef XFS_SCRUB_AGI_OP_ERROR_GOTO
