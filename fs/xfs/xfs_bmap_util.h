@@ -71,4 +71,8 @@ int	xfs_swap_extents(struct xfs_inode *ip, struct xfs_inode *tip,
 
 xfs_daddr_t xfs_fsb_to_db(struct xfs_inode *ip, xfs_fsblock_t fsb);
 
+int xfs_bmap_count_blocks(struct xfs_trans *tp, struct xfs_inode *ip,
+			  int whichfork, unsigned int *nextents,
+			  unsigned long long *count);
+
 #endif	/* __XFS_BMAP_UTIL_H__ */
