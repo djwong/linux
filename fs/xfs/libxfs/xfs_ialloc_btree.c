@@ -498,3 +498,12 @@ xfs_inobt_rec_check_count(
 	return 0;
 }
 #endif	/* DEBUG */
+
+/* Calculate the inobt btree size for some records. */
+xfs_extlen_t
+xfs_iallocbt_calc_size(
+	struct xfs_mount	*mp,
+	unsigned long long	len)
+{
+	return xfs_btree_calc_size(mp, mp->m_inobt_mnr, len);
+}
