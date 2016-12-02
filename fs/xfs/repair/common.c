@@ -912,13 +912,15 @@ out_err:
 
 /* Set us up with an inode. */
 STATIC int
-xfs_scrub_setup_inode(
+__xfs_scrub_setup_inode(
 	struct xfs_scrub_context	*sc,
 	struct xfs_inode		*ip,
 	struct xfs_scrub_metadata	*sm,
-	bool				retry_deadlocked)
+	bool				retry_deadlocked,
+	bool				flush_data)
 {
 	struct xfs_mount		*mp = ip->i_mount;
+	unsigned long long		resblks;
 	int				error;
 
 	memset(sc, 0, sizeof(*sc));
@@ -931,8 +933,31 @@ xfs_scrub_setup_inode(
 
 	xfs_ilock(sc->ip, XFS_IOLOCK_EXCL);
 	xfs_ilock(sc->ip, XFS_MMAPLOCK_EXCL);
+
+	/*
+	 * We don't want any ephemeral data fork updates sitting around
+	 * while we inspect block mappings, so wait for directio to finish
+	 * and flush dirty data if we have delalloc reservations.
+	 */
+	if (flush_data) {
+		inode_dio_wait(VFS_I(sc->ip));
+		error = filemap_write_and_wait(VFS_I(sc->ip)->i_mapping);
+		if (error)
+			goto out_unlock;
+	}
+
+	/*
+	 * Guess how many blocks we're going to need to rebuild an
+	 * entire bmap.  We don't actually know which fork, so err
+	 * on the side of asking for more blocks than we might
+	 * actually need.  Since we're reloading the btree sequentially
+	 * there should be fewer splits.
+	 */
+	resblks = xfs_bmbt_calc_size(mp,
+			max_t(xfs_extnum_t, sc->ip->i_d.di_nextents,
+				sc->ip->i_d.di_anextents));
 	error = xfs_scrub_trans_alloc(sm, mp, &M_RES(mp)->tr_itruncate,
-			0, 0, 0, &sc->tp);
+			resblks, 0, 0, &sc->tp);
 	if (error)
 		goto out_unlock;
 	xfs_ilock(sc->ip, XFS_ILOCK_EXCL);
@@ -961,7 +986,7 @@ xfs_scrub_setup_inode_raw(
 	if (sm->sm_ino && xfs_internal_inum(mp, sm->sm_ino))
 		return -ENOENT;
 
-	error = xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked);
+	error = __xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked, false);
 	if (error) {
 		memset(sc, 0, sizeof(*sc));
 		sc->ip = NULL;
@@ -972,24 +997,61 @@ xfs_scrub_setup_inode_raw(
 	return 0;
 }
 
+/* Set us up with an inode. */
+STATIC int
+xfs_scrub_setup_inode(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked)
+{
+	return __xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked, false);
+}
+
+/* Set us up with an inode and AG headers, if needed. */
+STATIC int
+__xfs_scrub_setup_inode_bmap(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked,
+	bool				data)
+{
+	int				error;
+
+	error = __xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked, data);
+	if (error || (!retry_deadlocked &&
+		      !(sm->sm_flags & XFS_SCRUB_FLAG_REPAIR)))
+		return error;
+
+	error = xfs_scrub_ag_lock_all(sc);
+	if (error)
+		goto err;
+	return 0;
+err:
+	return xfs_scrub_teardown(sc, ip, error);
+}
+
 /* Set us up with an inode and AG headers, if needed. */
 STATIC int
 xfs_scrub_setup_inode_bmap(
 	struct xfs_scrub_context	*sc,
 	struct xfs_inode		*ip,
 	struct xfs_scrub_metadata	*sm,
-	bool				retry_deadlocked)
+	bool				deadlocked)
 {
-	int				error;
+	return __xfs_scrub_setup_inode_bmap(sc, ip, sm, deadlocked, false);
+}
 
-	error = xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked);
-	if (error || !retry_deadlocked)
-		return error;
-
-	error = xfs_scrub_ag_lock_all(sc);
-	if (error)
-		return xfs_scrub_teardown(sc, ip, error);
-	return 0;
+/* Set us up with an inode and AG headers, if needed. */
+STATIC int
+xfs_scrub_setup_inode_bmap_data(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				deadlocked)
+{
+	return __xfs_scrub_setup_inode_bmap(sc, ip, sm, deadlocked, true);
 }
 
 /* Set us up with an inode and a buffer for reading xattr values. */
@@ -1093,8 +1155,8 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_ag_header_freeze, xfs_scrub_rmapbt, xfs_repair_rmapbt, xfs_sb_version_hasrmapbt},
 	{xfs_scrub_setup_ag_header, xfs_scrub_refcountbt, xfs_repair_refcountbt, xfs_sb_version_hasreflink},
 	{xfs_scrub_setup_inode_raw, xfs_scrub_inode, xfs_repair_inode, NULL},
-	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_data, NULL, NULL},
-	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_attr, NULL, NULL},
+	{xfs_scrub_setup_inode_bmap_data, xfs_scrub_bmap_data, xfs_repair_bmap_data, NULL},
+	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_attr, xfs_repair_bmap_attr, NULL},
 	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_cow, NULL, NULL},
 	{xfs_scrub_setup_inode, xfs_scrub_directory, NULL, NULL},
 	{xfs_scrub_setup_inode_xattr, xfs_scrub_xattr, NULL, NULL},
