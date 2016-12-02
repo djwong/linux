@@ -46,6 +46,7 @@
 #include "xfs_trans_priv.h"
 #include "repair/xfs_scrub.h"
 #include "repair/common.h"
+#include "repair/btree.h"
 
 /*
  * Online Scrub and Repair
@@ -306,6 +307,235 @@ xfs_scrub_data_ok(
 	return fs_ok;
 }
 
+/* AG scrubbing */
+
+/* Grab all the headers for an AG. */
+static int
+xfs_scrub_ag_read_headers(
+	struct xfs_scrub_context	*sc,
+	xfs_agnumber_t			agno,
+	struct xfs_buf			**agi,
+	struct xfs_buf			**agf,
+	struct xfs_buf			**agfl)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+	int				error;
+
+	error = xfs_ialloc_read_agi(mp, sc->tp, agno, agi);
+	if (error)
+		goto out;
+
+	error = xfs_alloc_read_agf(mp, sc->tp, agno, 0, agf);
+	if (error)
+		goto out;
+
+	error = xfs_alloc_read_agfl(mp, sc->tp, agno, agfl);
+	if (error)
+		goto out;
+
+out:
+	return error;
+}
+
+/* Release all the AG btree cursors. */
+STATIC void
+xfs_scrub_ag_btcur_free(
+	struct xfs_scrub_ag		*sa)
+{
+	if (sa->refc_cur)
+		xfs_btree_del_cursor(sa->refc_cur, XFS_BTREE_ERROR);
+	if (sa->rmap_cur)
+		xfs_btree_del_cursor(sa->rmap_cur, XFS_BTREE_ERROR);
+	if (sa->fino_cur)
+		xfs_btree_del_cursor(sa->fino_cur, XFS_BTREE_ERROR);
+	if (sa->ino_cur)
+		xfs_btree_del_cursor(sa->ino_cur, XFS_BTREE_ERROR);
+	if (sa->cnt_cur)
+		xfs_btree_del_cursor(sa->cnt_cur, XFS_BTREE_ERROR);
+	if (sa->bno_cur)
+		xfs_btree_del_cursor(sa->bno_cur, XFS_BTREE_ERROR);
+
+	sa->refc_cur = NULL;
+	sa->rmap_cur = NULL;
+	sa->fino_cur = NULL;
+	sa->ino_cur = NULL;
+	sa->bno_cur = NULL;
+	sa->cnt_cur = NULL;
+}
+
+/* Initialize all the btree cursors for an AG. */
+int
+xfs_scrub_ag_btcur_init(
+	struct xfs_scrub_context	*sc,
+	struct xfs_scrub_ag		*sa)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+	xfs_agnumber_t			agno = sa->agno;
+
+	if (sa->agf_bp) {
+		/* Set up a bnobt cursor for cross-referencing. */
+		sa->bno_cur = xfs_allocbt_init_cursor(mp, sc->tp, sa->agf_bp,
+				agno, XFS_BTNUM_BNO);
+		if (!sa->bno_cur)
+			goto err;
+
+		/* Set up a cntbt cursor for cross-referencing. */
+		sa->cnt_cur = xfs_allocbt_init_cursor(mp, sc->tp, sa->agf_bp,
+				agno, XFS_BTNUM_CNT);
+		if (!sa->cnt_cur)
+			goto err;
+	}
+
+	/* Set up a inobt cursor for cross-referencing. */
+	if (sa->agi_bp) {
+		sa->ino_cur = xfs_inobt_init_cursor(mp, sc->tp, sa->agi_bp,
+					agno, XFS_BTNUM_INO);
+		if (!sa->ino_cur)
+			goto err;
+	}
+
+	/* Set up a finobt cursor for cross-referencing. */
+	if (sa->agi_bp && xfs_sb_version_hasfinobt(&mp->m_sb)) {
+		sa->fino_cur = xfs_inobt_init_cursor(mp, sc->tp, sa->agi_bp,
+				agno, XFS_BTNUM_FINO);
+		if (!sa->fino_cur)
+			goto err;
+	}
+
+	/* Set up a rmapbt cursor for cross-referencing. */
+	if (sa->agf_bp && xfs_sb_version_hasrmapbt(&mp->m_sb)) {
+		sa->rmap_cur = xfs_rmapbt_init_cursor(mp, sc->tp, sa->agf_bp,
+				agno);
+		if (!sa->rmap_cur)
+			goto err;
+	}
+
+	/* Set up a refcountbt cursor for cross-referencing. */
+	if (sa->agf_bp && xfs_sb_version_hasreflink(&mp->m_sb)) {
+		sa->refc_cur = xfs_refcountbt_init_cursor(mp, sc->tp,
+				sa->agf_bp, agno, NULL);
+		if (!sa->refc_cur)
+			goto err;
+	}
+
+	return 0;
+err:
+	return -ENOMEM;
+}
+
+/* Release the AG header context and btree cursors. */
+void
+xfs_scrub_ag_free(
+	struct xfs_scrub_ag		*sa)
+{
+	xfs_scrub_ag_btcur_free(sa);
+	sa->agno = NULLAGNUMBER;
+}
+
+/*
+ * For scrub, grab the AGI and the AGF headers, in that order.  Locking
+ * order requires us to get the AGI before the AGF.  We use the
+ * transaction to avoid deadlocking on crosslinked metadata buffers;
+ * either the caller passes one in (bmap scrub) or we have to create a
+ * transaction ourselves.
+ */
+int
+xfs_scrub_ag_init(
+	struct xfs_scrub_context	*sc,
+	xfs_agnumber_t			agno,
+	struct xfs_scrub_ag		*sa)
+{
+	int				error;
+
+	memset(sa, 0, sizeof(*sa));
+	sa->agno = agno;
+	error = xfs_scrub_ag_read_headers(sc, agno, &sa->agi_bp,
+			&sa->agf_bp, &sa->agfl_bp);
+	if (error)
+		goto err;
+
+	error = xfs_scrub_ag_btcur_init(sc, sa);
+	if (error)
+		goto err;
+
+	return error;
+err:
+	xfs_scrub_ag_free(sa);
+	return error;
+}
+
+/* Organize locking of multiple AGs for a scrub. */
+
+/* Initialize the AG lock handler. */
+static inline void
+xfs_scrub_ag_lock_init(
+	struct xfs_mount		*mp,
+	struct xfs_scrub_ag_lock	*ag_lock)
+{
+	if (mp->m_sb.sb_agcount <= XFS_SCRUB_AGMASK_NR)
+		ag_lock->agmask = ag_lock->__agmask;
+	else
+		ag_lock->agmask = kmem_alloc(1 + (mp->m_sb.sb_agcount / NBBY),
+				KM_SLEEP | KM_NOFS);
+	ag_lock->max_ag = NULLAGNUMBER;
+}
+
+/* Can we lock the AG's headers without deadlocking? */
+bool
+xfs_scrub_ag_can_lock(
+	struct xfs_scrub_context	*sc,
+	xfs_agnumber_t			agno)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+	struct xfs_scrub_ag_lock	*ag_lock = &sc->ag_lock;
+
+	ASSERT(agno < mp->m_sb.sb_agcount);
+
+	trace_xfs_scrub_ag_can_lock(mp, ag_lock->max_ag, agno);
+
+	/* Already locked? */
+	if (test_bit(agno, ag_lock->agmask))
+		return true;
+
+	/* If we can't lock the AG without violating locking order, bail out. */
+	if (agno < ag_lock->max_ag) {
+		trace_xfs_scrub_ag_may_deadlock(mp, ag_lock->max_ag, agno);
+		return false;
+	}
+
+	set_bit(agno, ag_lock->agmask);
+	ag_lock->max_ag = agno;
+	return true;
+}
+
+/* Read all AG headers and attach to this transaction. */
+int
+xfs_scrub_ag_lock_all(
+	struct xfs_scrub_context	*sc)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+	struct xfs_scrub_ag_lock	*ag_lock = &sc->ag_lock;
+	struct xfs_buf			*agi;
+	struct xfs_buf			*agf;
+	struct xfs_buf			*agfl;
+	xfs_agnumber_t			agno;
+	int				error = 0;
+
+	trace_xfs_scrub_ag_lock_all(mp, ag_lock->max_ag, mp->m_sb.sb_agcount);
+
+	ASSERT(ag_lock->max_ag == NULLAGNUMBER);
+	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
+		error = xfs_scrub_ag_read_headers(sc, agno, &agi, &agf,
+				&agfl);
+		if (error)
+			break;
+		set_bit(agno, ag_lock->agmask);
+		ag_lock->max_ag = agno;
+	}
+
+	return error;
+}
+
 /* Dummy scrubber */
 
 STATIC int
@@ -332,6 +562,10 @@ xfs_scrub_teardown(
 	struct xfs_scrub_context	*sc,
 	int				error)
 {
+	xfs_scrub_ag_free(&sc->sa);
+	if (sc->ag_lock.agmask != sc->ag_lock.__agmask)
+		kmem_free(sc->ag_lock.agmask);
+	sc->ag_lock.agmask = NULL;
 	xfs_trans_cancel(sc->tp);
 	sc->tp = NULL;
 	return error;
