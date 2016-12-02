@@ -96,7 +96,8 @@ extern void xfs_verifier_error(struct xfs_buf *bp);
 #define XFS_ERRTAG_REFCOUNT_FINISH_ONE			25
 #define XFS_ERRTAG_BMAP_FINISH_ONE			26
 #define XFS_ERRTAG_AG_RESV_CRITICAL			27
-#define XFS_ERRTAG_MAX					28
+#define XFS_ERRTAG_FORCE_SCRUB_REPAIR			28
+#define XFS_ERRTAG_MAX					29
 
 /*
  * Random factors for above tags, 1 means always, 2 means 1/2 time, etc.
@@ -129,6 +130,7 @@ extern void xfs_verifier_error(struct xfs_buf *bp);
 #define XFS_RANDOM_REFCOUNT_FINISH_ONE			1
 #define XFS_RANDOM_BMAP_FINISH_ONE			1
 #define XFS_RANDOM_AG_RESV_CRITICAL			4
+#define XFS_RANDOM_FORCE_SCRUB_REPAIR			1
 
 #ifdef DEBUG
 extern int xfs_error_test_active;
