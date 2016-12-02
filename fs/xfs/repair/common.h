@@ -179,6 +179,14 @@ bool xfs_scrub_data_ok(struct xfs_scrub_context *sc, int whichfork,
 			goto label; \
 	} while(0)
 
+bool __xfs_scrub_should_xref(struct xfs_scrub_context *sc, int error,
+			     struct xfs_btree_cur **curpp, const char *func,
+			     int line);
+#define xfs_scrub_should_xref(sc, error, curpp) \
+	__xfs_scrub_should_xref((sc), (error), (curpp), __func__, __LINE__)
+#define xfs_scrub_btree_should_xref(bs, error, curpp) \
+	__xfs_scrub_should_xref((bs)->sc, (error), (curpp), __func__, __LINE__)
+
 bool xfs_scrub_ag_can_lock(struct xfs_scrub_context *sc, xfs_agnumber_t agno);
 int xfs_scrub_ag_lock_all(struct xfs_scrub_context *sc);
 void xfs_scrub_ag_free(struct xfs_scrub_ag *sa);
@@ -188,6 +196,8 @@ int xfs_scrub_ag_btcur_init(struct xfs_scrub_context *sc,
 			    struct xfs_scrub_ag *sa);
 int xfs_scrub_load_ag_headers(struct xfs_scrub_context *sc, xfs_agnumber_t agno,
 			      unsigned int type);
+int xfs_scrub_ag_btcur_init(struct xfs_scrub_context *sc,
+			    struct xfs_scrub_ag *sa);
 
 int xfs_scrub_walk_agfl(struct xfs_scrub_context *sc,
 			int (*fn)(struct xfs_scrub_context *, xfs_agblock_t bno,

@@ -35,6 +35,7 @@
 #include "xfs_ialloc_btree.h"
 #include "xfs_icache.h"
 #include "xfs_rmap.h"
+#include "xfs_alloc.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -51,9 +52,12 @@ xfs_scrub_iallocbt_chunk(
 {
 	struct xfs_mount		*mp = bs->cur->bc_mp;
 	struct xfs_agf			*agf;
+	struct xfs_scrub_ag		*psa;
 	xfs_agblock_t			eoag;
 	xfs_agblock_t			bno;
+	bool				is_freesp;
 	int				error = 0;
+	int				err2;
 
 	agf = XFS_BUF_TO_AGF(bs->sc->sa.agf_bp);
 	eoag = be32_to_cpu(agf->agf_length);
@@ -70,6 +74,15 @@ xfs_scrub_iallocbt_chunk(
 	if (error) {
 		*keep_scanning = false;
 		goto out;
+	}
+
+	psa = &bs->sc->sa;
+	/* Cross-reference with the bnobt. */
+	if (psa->bno_cur) {
+		err2 = xfs_alloc_has_record(psa->bno_cur, bno, len,
+				&is_freesp);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->bno_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, !is_freesp);
 	}
 
 out:
