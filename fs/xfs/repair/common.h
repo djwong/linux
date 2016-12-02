@@ -186,4 +186,8 @@ int xfs_scrub_ag_init(struct xfs_scrub_context *sc, xfs_agnumber_t agno,
 int xfs_scrub_ag_btcur_init(struct xfs_scrub_context *sc,
 			    struct xfs_scrub_ag *sa);
 
+/* Metadata scrubbers */
+
+int xfs_scrub_superblock(struct xfs_scrub_context *sc);
+
 #endif	/* __XFS_REPAIR_COMMON_H__ */
