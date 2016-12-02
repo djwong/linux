@@ -38,6 +38,7 @@
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
+#include "xfs_refcount.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -81,12 +82,17 @@ xfs_scrub_bmap_extent(
 	xfs_agnumber_t			agno;
 	xfs_fsblock_t			bno;
 	struct xfs_rmap_irec		rmap;
+	struct xfs_refcount_irec	rc;
 	uint64_t			owner;
 	xfs_fileoff_t			offset;
+	xfs_agblock_t			fbno;
+	xfs_extlen_t			flen;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_cowflag;
 	unsigned int			rflags;
 	int				has_rmap;
+	int				has_refcount;
 	int				error = 0;
 	int				err2 = 0;
 
@@ -240,6 +246,57 @@ xfs_scrub_bmap_extent(
 		}
 		XFS_SCRUB_BMAP_CHECK(!(rmap.rm_flags & XFS_RMAP_BMBT_BLOCK));
 skip_rmap_xref:
+		;
+	}
+
+	/*
+	 * If this is a non-shared file on a reflink filesystem,
+	 * check the refcountbt to see if the flag is wrong.
+	 */
+	if (sa.refc_cur) {
+		if (info->whichfork == XFS_COW_FORK) {
+			/* Check this CoW staging extent. */
+			err2 = xfs_refcount_lookup_le(sa.refc_cur,
+					bno + XFS_REFC_COW_START,
+					&has_refcount);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.refc_cur)) {
+				XFS_SCRUB_BMAP_GOTO(has_refcount,
+						skip_refc_xref);
+			} else
+				goto skip_refc_xref;
+
+			err2 = xfs_refcount_get_rec(sa.refc_cur, &rc,
+					&has_refcount);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.refc_cur)) {
+				XFS_SCRUB_BMAP_GOTO(has_refcount,
+						skip_refc_xref);
+			} else
+				goto skip_refc_xref;
+
+			has_cowflag = !!(rc.rc_startblock & XFS_REFC_COW_START);
+			XFS_SCRUB_BMAP_CHECK(
+					(rc.rc_refcount == 1 && has_cowflag) ||
+					(rc.rc_refcount != 1 && !has_cowflag));
+			rc.rc_startblock &= ~XFS_REFC_COW_START;
+			XFS_SCRUB_BMAP_CHECK(rc.rc_startblock <= bno);
+			XFS_SCRUB_BMAP_CHECK(rc.rc_startblock <
+					rc.rc_startblock + rc.rc_blockcount);
+			XFS_SCRUB_BMAP_CHECK(bno + irec->br_blockcount <=
+					rc.rc_startblock + rc.rc_blockcount);
+			XFS_SCRUB_BMAP_CHECK(rc.rc_refcount == 1);
+		} else {
+			/* If this is shared, the inode flag must be set. */
+			err2 = xfs_refcount_find_shared(sa.refc_cur, bno,
+					irec->br_blockcount, &fbno, &flen,
+					false);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.refc_cur))
+				XFS_SCRUB_BMAP_CHECK(flen == 0 ||
+						xfs_is_reflink_inode(ip));
+		}
+skip_refc_xref:
 		;
 	}
 
