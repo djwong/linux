@@ -36,6 +36,7 @@
 #include "xfs_bmap_util.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_rmap.h"
+#include "xfs_alloc.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -77,7 +78,10 @@ xfs_scrub_bmap_extent(
 	xfs_daddr_t			daddr;
 	xfs_daddr_t			dlen;
 	xfs_agnumber_t			agno;
+	xfs_fsblock_t			bno;
+	bool				is_freesp;
 	int				error = 0;
+	int				err2 = 0;
 
 	if (cur)
 		xfs_btree_get_block(cur, 0, &bp);
@@ -94,10 +98,12 @@ xfs_scrub_bmap_extent(
 	if (info->is_rt) {
 		daddr = XFS_FSB_TO_BB(mp, irec->br_startblock);
 		agno = NULLAGNUMBER;
+		bno = irec->br_startblock;
 	} else {
 		daddr = XFS_FSB_TO_DADDR(mp, irec->br_startblock);
 		agno = XFS_FSB_TO_AGNO(mp, irec->br_startblock);
 		XFS_SCRUB_BMAP_GOTO(agno < mp->m_sb.sb_agcount, out);
+		bno = XFS_FSB_TO_AGBNO(mp, irec->br_startblock);
 	}
 	dlen = XFS_FSB_TO_BB(mp, irec->br_blockcount);
 	XFS_SCRUB_BMAP_CHECK(daddr < info->eofs);
@@ -113,6 +119,14 @@ xfs_scrub_bmap_extent(
 			return -EDEADLOCK;
 		error = xfs_scrub_ag_init(info->sc, agno, &sa);
 		XFS_SCRUB_BMAP_OP_ERROR_GOTO(out);
+	}
+
+	/* Cross-reference with the bnobt. */
+	if (sa.bno_cur) {
+		err2 = xfs_alloc_has_record(sa.bno_cur, bno,
+				irec->br_blockcount, &is_freesp);
+		if (xfs_scrub_should_xref(info->sc, err2, &sa.bno_cur))
+			XFS_SCRUB_BMAP_CHECK(!is_freesp);
 	}
 
 	xfs_scrub_ag_free(&sa);

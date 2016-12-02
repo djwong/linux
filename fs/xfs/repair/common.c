@@ -538,6 +538,48 @@ xfs_scrub_ag_lock_all(
 	return error;
 }
 
+/*
+ * Predicate that decides if we need to evaluate the cross-reference check.
+ * If there was an error accessing the cross-reference btree, just delete
+ * the cursor and skip the check.
+ */
+bool
+__xfs_scrub_should_xref(
+	struct xfs_scrub_context	*sc,
+	int				error,
+	struct xfs_btree_cur		**curpp,
+	const char			*func,
+	int				line)
+{
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+
+	/* If not a btree cross-reference, just check the error code. */
+	if (curpp == NULL) {
+		if (error == 0)
+			return true;
+		trace_xfs_scrub_xref_error(mp, "unknown", error, func, line);
+		return false;
+	}
+
+	ASSERT(*curpp != NULL);
+	/* If no error or we've already given up on xref, just bail out. */
+	if (error == 0 || *curpp == NULL)
+		return true;
+
+	/* xref error, delete cursor and bail out. */
+	sc->sm->sm_flags |= XFS_SCRUB_FLAG_XREF_FAIL;
+	trace_xfs_scrub_xref_error(mp, btree_types[(*curpp)->bc_btnum],
+			error, func, line);
+	xfs_btree_del_cursor(*curpp, XFS_BTREE_ERROR);
+	*curpp = NULL;
+
+	return false;
+}
+#define xfs_scrub_should_xref(sc, error, curpp) \
+	__xfs_scrub_should_xref((sc), (error), (curpp), __func__, __LINE__)
+#define xfs_scrub_btree_should_xref(bs, error, curpp) \
+	__xfs_scrub_should_xref((bs)->sc, (error), (curpp), __func__, __LINE__)
+
 /* Dummy scrubber */
 
 STATIC int

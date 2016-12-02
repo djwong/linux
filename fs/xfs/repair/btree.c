@@ -494,6 +494,93 @@ out_cur:
 	return error;
 }
 
+struct check_owner {
+	struct list_head	list;
+	xfs_fsblock_t		fsb;
+};
+
+/*
+ * Make sure this btree block isn't in the free list and that there's
+ * an rmap record for it.
+ */
+STATIC int
+xfs_scrub_btree_check_block_owner(
+	struct xfs_scrub_btree		*bs,
+	xfs_fsblock_t			fsb)
+{
+	struct xfs_scrub_ag		sa;
+	struct xfs_scrub_ag		*psa;
+	xfs_agnumber_t			agno;
+	xfs_agblock_t			bno;
+	bool				is_freesp;
+	int				error = 0;
+	int				err2;
+
+	agno = XFS_FSB_TO_AGNO(bs->cur->bc_mp, fsb);
+	bno = XFS_FSB_TO_AGBNO(bs->cur->bc_mp, fsb);
+
+	if (bs->cur->bc_flags & XFS_BTREE_LONG_PTRS) {
+		if (!xfs_scrub_ag_can_lock(bs->sc, agno))
+			return -EDEADLOCK;
+		error = xfs_scrub_ag_init(bs->sc, agno, &sa);
+		if (error)
+			return error;
+		psa = &sa;
+	} else
+		psa = &bs->sc->sa;
+
+	/* Check that this block isn't free. */
+	if (psa->bno_cur) {
+		err2 = xfs_alloc_has_record(psa->bno_cur, bno, 1, &is_freesp);
+		if (xfs_scrub_btree_should_xref(bs, err2, NULL))
+			XFS_SCRUB_BTREC_CHECK(bs, !is_freesp);
+	}
+
+	if (bs->cur->bc_flags & XFS_BTREE_LONG_PTRS)
+		xfs_scrub_ag_free(&sa);
+
+	return error;
+}
+
+/* Check the owner of a btree block. */
+STATIC int
+xfs_scrub_btree_check_owner(
+	struct xfs_scrub_btree		*bs,
+	struct xfs_buf			*bp)
+{
+	struct xfs_btree_cur		*cur = bs->cur;
+	struct check_owner		*co;
+	xfs_fsblock_t			fsbno;
+	xfs_agnumber_t			agno;
+
+	if ((cur->bc_flags & XFS_BTREE_ROOT_IN_INODE) && bp == NULL)
+		return 0;
+
+	fsbno = XFS_DADDR_TO_FSB(cur->bc_mp, bp->b_bn);
+	agno = XFS_FSB_TO_AGNO(cur->bc_mp, fsbno);
+
+	/* Turn back if we could deadlock. */
+	if ((bs->cur->bc_flags & XFS_BTREE_LONG_PTRS) &&
+	    !xfs_scrub_ag_can_lock(bs->sc, agno))
+		return -EDEADLOCK;
+
+	/*
+	 * We want to cross-reference each btree block with the bnobt
+	 * and the rmapbt.  We cannot cross-reference the bnobt or
+	 * rmapbt while scanning the bnobt or rmapbt, respectively,
+	 * because that would trash the cursor state.  Therefore, save
+	 * the block numbers for later scanning.
+	 */
+	if (cur->bc_btnum == XFS_BTNUM_BNO || cur->bc_btnum == XFS_BTNUM_RMAP) {
+		co = kmem_alloc(sizeof(struct check_owner), KM_SLEEP | KM_NOFS);
+		co->fsb = fsbno;
+		list_add_tail(&co->list, &bs->to_check);
+		return 0;
+	}
+
+	return xfs_scrub_btree_check_block_owner(bs, fsbno);
+}
+
 /* Grab and scrub a btree block. */
 STATIC int
 xfs_scrub_btree_block(
@@ -511,6 +598,10 @@ xfs_scrub_btree_block(
 
 	xfs_btree_get_block(bs->cur, level, pbp);
 	error = xfs_btree_check_block(bs->cur, *pblock, level, *pbp);
+	if (error)
+		return error;
+
+	error = xfs_scrub_btree_check_owner(bs, *pbp);
 	if (error)
 		return error;
 
@@ -539,6 +630,8 @@ xfs_scrub_btree(
 	struct xfs_btree_block		*block;
 	int				level;
 	struct xfs_buf			*bp;
+	struct check_owner		*co;
+	struct check_owner		*n;
 	int				i;
 	int				error = 0;
 
@@ -651,6 +744,14 @@ out:
 				cur->bc_ra[i] = 0;
 			}
 		}
+	}
+
+	/* Process deferred owner checks on btree blocks. */
+	list_for_each_entry_safe(co, n, &bs.to_check, list) {
+		if (!error)
+			error = xfs_scrub_btree_check_block_owner(&bs, co->fsb);
+		list_del(&co->list);
+		kmem_free(co);
 	}
 
 out_badcursor:
