@@ -44,6 +44,8 @@
 #include "xfs_rtalloc.h"
 #include "xfs_log.h"
 #include "xfs_trans_priv.h"
+#include "xfs_icache.h"
+#include "xfs_itable.h"
 #include "repair/xfs_scrub.h"
 #include "repair/common.h"
 #include "repair/btree.h"
@@ -560,6 +562,7 @@ xfs_scrub_dummy(
 STATIC int
 xfs_scrub_teardown(
 	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip_in,
 	int				error)
 {
 	xfs_scrub_ag_free(&sc->sa);
@@ -568,6 +571,14 @@ xfs_scrub_teardown(
 	sc->ag_lock.agmask = NULL;
 	xfs_trans_cancel(sc->tp);
 	sc->tp = NULL;
+	if (sc->ip != NULL) {
+		xfs_iunlock(sc->ip, XFS_ILOCK_EXCL);
+		xfs_iunlock(sc->ip, XFS_IOLOCK_EXCL);
+		xfs_iunlock(sc->ip, XFS_MMAPLOCK_EXCL);
+		if (sc->ip != ip_in)
+			IRELE(sc->ip);
+		sc->ip = NULL;
+	}
 	return error;
 }
 
@@ -685,6 +696,111 @@ out:
 	return error;
 }
 
+/*
+ * Given an inode and the scrub control structure, return either the
+ * inode referenced in the control structure or the inode passed in.
+ * The inode is not locked.
+ */
+STATIC struct xfs_inode *
+xfs_scrub_get_inode(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+	struct xfs_inode		*ips = NULL;
+	int				error;
+
+	if (sc->sm->sm_gen && !sc->sm->sm_ino)
+		return ERR_PTR(-EINVAL);
+
+	if (sc->sm->sm_ino && sc->sm->sm_ino != ip->i_ino) {
+		if (xfs_internal_inum(mp, sc->sm->sm_ino))
+			return ERR_PTR(-ENOENT);
+		error = xfs_iget(mp, NULL, sc->sm->sm_ino,
+				XFS_IGET_UNTRUSTED | XFS_IGET_DONTCACHE,
+				0, &ips);
+		if (error) {
+			trace_xfs_scrub_op_error(mp,
+					XFS_INO_TO_AGNO(mp, sc->sm->sm_ino),
+					XFS_INO_TO_AGBNO(mp, sc->sm->sm_ino),
+					"inode", error, __func__, __LINE__);
+			goto out_err;
+		}
+		if (VFS_I(ips)->i_generation != sc->sm->sm_gen) {
+			IRELE(ips);
+			return ERR_PTR(-ENOENT);
+		}
+
+		return ips;
+	}
+
+	return ip;
+out_err:
+	return ERR_PTR(error);
+}
+
+/* Set us up with an inode. */
+STATIC int
+xfs_scrub_setup_inode(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+	int				error;
+
+	memset(sc, 0, sizeof(*sc));
+	sc->sm = sm;
+	sc->ip = xfs_scrub_get_inode(sc, ip);
+	if (IS_ERR(sc->ip))
+		return PTR_ERR(sc->ip);
+	else if (sc->ip == NULL)
+		return -ENOENT;
+
+	xfs_ilock(sc->ip, XFS_IOLOCK_EXCL);
+	xfs_ilock(sc->ip, XFS_MMAPLOCK_EXCL);
+	error = xfs_scrub_trans_alloc(sm, mp, &M_RES(mp)->tr_itruncate,
+			0, 0, 0, &sc->tp);
+	if (error)
+		goto out_unlock;
+	xfs_ilock(sc->ip, XFS_ILOCK_EXCL);
+
+	xfs_scrub_ag_lock_init(mp, &sc->ag_lock);
+	return error;
+out_unlock:
+	xfs_iunlock(sc->ip, XFS_IOLOCK_EXCL);
+	xfs_iunlock(sc->ip, XFS_MMAPLOCK_EXCL);
+	if (sc->ip != ip)
+		IRELE(sc->ip);
+	return error;
+}
+
+/* Try to get the in-core inode.  If we can't, we'll just have to do it raw. */
+STATIC int
+xfs_scrub_setup_inode_raw(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+	int				error;
+
+	if (sm->sm_ino && xfs_internal_inum(mp, sm->sm_ino))
+		return -ENOENT;
+
+	error = xfs_scrub_setup_inode(sc, ip, sm, retry_deadlocked);
+	if (error) {
+		memset(sc, 0, sizeof(*sc));
+		sc->ip = NULL;
+		sc->sm = sm;
+		return xfs_scrub_trans_alloc(sm, mp,
+				&M_RES(mp)->tr_itruncate, 0, 0, 0, &sc->tp);
+	}
+	return 0;
+}
+
 /* Scrubbing dispatch. */
 
 struct xfs_scrub_meta_fns {
@@ -707,6 +823,7 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_ag_header, xfs_scrub_finobt, NULL, xfs_sb_version_hasfinobt},
 	{xfs_scrub_setup_ag_header, xfs_scrub_rmapbt, NULL, xfs_sb_version_hasrmapbt},
 	{xfs_scrub_setup_ag_header, xfs_scrub_refcountbt, NULL, xfs_sb_version_hasreflink},
+	{xfs_scrub_setup_inode_raw, xfs_scrub_inode, NULL, NULL},
 };
 
 /* Dispatch metadata scrubbing. */
@@ -770,7 +887,7 @@ retry_op:
 	error = fns->scrub(&sc);
 	if (!deadlocked && error == -EDEADLOCK) {
 		deadlocked = true;
-		error = xfs_scrub_teardown(&sc, error);
+		error = xfs_scrub_teardown(&sc, ip, error);
 		if (error != -EDEADLOCK)
 			goto out;
 		goto retry_op;
@@ -781,7 +898,7 @@ retry_op:
 		xfs_alert_ratelimited(mp, "Corruption detected during scrub.");
 
 out_teardown:
-	error = xfs_scrub_teardown(&sc, error);
+	error = xfs_scrub_teardown(&sc, ip, error);
 out:
 	trace_xfs_scrub_done(ip, sm->sm_type, sm->sm_agno, sm->sm_ino,
 			sm->sm_gen, sm->sm_flags, error);
