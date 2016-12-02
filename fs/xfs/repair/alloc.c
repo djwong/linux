@@ -52,6 +52,7 @@ xfs_scrub_allocbt_helper(
 	xfs_agblock_t			bno;
 	xfs_extlen_t			flen;
 	xfs_extlen_t			len;
+	bool				has_rmap;
 	bool				has_inodes;
 	int				has_otherrec;
 	int				error = 0;
@@ -110,6 +111,14 @@ xfs_scrub_allocbt_helper(
 				len, &has_inodes);
 		if (xfs_scrub_btree_should_xref(bs, err2, &psa->fino_cur))
 			XFS_SCRUB_BTREC_CHECK(bs, !has_inodes);
+	}
+
+	/* Cross-reference with the rmapbt. */
+	if (psa->rmap_cur) {
+		err2 = xfs_rmap_has_record(psa->rmap_cur, bno, len,
+				&has_rmap);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->rmap_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, !has_rmap);
 	}
 
 out:

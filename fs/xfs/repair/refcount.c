@@ -38,6 +38,163 @@
 
 /* Reference count btree scrubber. */
 
+struct xfs_scrub_refcountbt_fragment {
+	struct xfs_rmap_irec		rm;
+	struct list_head		list;
+};
+
+struct xfs_scrub_refcountbt_rmap_check_info {
+	struct xfs_scrub_btree		*bs;
+	xfs_nlink_t			nr;
+	struct xfs_refcount_irec	rc;
+	struct list_head		fragments;
+};
+
+/*
+ * Decide if the given rmap is large enough that we can redeem it
+ * towards refcount verification now, or if it's a fragment, in
+ * which case we'll hang onto it in the hopes that we'll later
+ * discover that we've collected exactly the correct number of
+ * fragments as the refcountbt says we should have.
+ */
+STATIC int
+xfs_scrub_refcountbt_rmap_check(
+	struct xfs_btree_cur		*cur,
+	struct xfs_rmap_irec		*rec,
+	void				*priv)
+{
+	struct xfs_scrub_refcountbt_rmap_check_info	*rsrci = priv;
+	struct xfs_scrub_refcountbt_fragment		*frag;
+	xfs_agblock_t			rm_last;
+	xfs_agblock_t			rc_last;
+
+	rm_last = rec->rm_startblock + rec->rm_blockcount;
+	rc_last = rsrci->rc.rc_startblock + rsrci->rc.rc_blockcount;
+	XFS_SCRUB_BTREC_CHECK(rsrci->bs, rsrci->rc.rc_refcount != 1 ||
+			rec->rm_owner == XFS_RMAP_OWN_COW);
+	if (rec->rm_startblock <= rsrci->rc.rc_startblock && rm_last >= rc_last)
+		rsrci->nr++;
+	else {
+		frag = kmem_zalloc(sizeof(struct xfs_scrub_refcountbt_fragment),
+				KM_SLEEP);
+		frag->rm = *rec;
+		list_add_tail(&frag->list, &rsrci->fragments);
+	}
+
+	return 0;
+}
+
+/*
+ * Given a bunch of rmap fragments, iterate through them, keeping
+ * a running tally of the refcount.  If this ever deviates from
+ * what we expect (which is the refcountbt's refcount minus the
+ * number of extents that totally covered the refcountbt extent),
+ * we have a refcountbt error.
+ */
+STATIC void
+xfs_scrub_refcountbt_process_rmap_fragments(
+	struct xfs_mount				*mp,
+	struct xfs_scrub_refcountbt_rmap_check_info	*rsrci)
+{
+	struct list_head				worklist;
+	struct xfs_scrub_refcountbt_fragment		*cur;
+	struct xfs_scrub_refcountbt_fragment		*n;
+	xfs_agblock_t					bno;
+	xfs_agblock_t					rbno;
+	xfs_agblock_t					next_rbno;
+	xfs_nlink_t					nr;
+	xfs_nlink_t					target_nr;
+
+	target_nr = rsrci->rc.rc_refcount - rsrci->nr;
+	if (target_nr == 0)
+		return;
+
+	/*
+	 * There are (rsrci->rc.rc_refcount - rsrci->nr refcount)
+	 * references we haven't found yet.  Pull that many off the
+	 * fragment list and figure out where the smallest rmap ends
+	 * (and therefore the next rmap should start).  All the rmaps
+	 * we pull off should start at or before the beginning of the
+	 * refcount record's range.
+	 */
+	INIT_LIST_HEAD(&worklist);
+	rbno = NULLAGBLOCK;
+	nr = 1;
+	list_for_each_entry_safe(cur, n, &rsrci->fragments, list) {
+		if (cur->rm.rm_startblock > rsrci->rc.rc_startblock)
+			goto fail;
+		bno = cur->rm.rm_startblock + cur->rm.rm_blockcount;
+		if (rbno > bno)
+			rbno = bno;
+		list_del(&cur->list);
+		list_add_tail(&cur->list, &worklist);
+		if (nr == target_nr)
+			break;
+		nr++;
+	}
+
+	if (nr != target_nr)
+		goto fail;
+
+	while (!list_empty(&rsrci->fragments)) {
+		/* Discard any fragments ending at rbno. */
+		nr = 0;
+		next_rbno = NULLAGBLOCK;
+		list_for_each_entry_safe(cur, n, &worklist, list) {
+			bno = cur->rm.rm_startblock + cur->rm.rm_blockcount;
+			if (bno != rbno) {
+				if (next_rbno > bno)
+					next_rbno = bno;
+				continue;
+			}
+			list_del(&cur->list);
+			kmem_free(cur);
+			nr++;
+		}
+
+		/* Empty list?  We're done. */
+		if (list_empty(&rsrci->fragments))
+			break;
+
+		/* Try to add nr rmaps starting at rbno to the worklist. */
+		list_for_each_entry_safe(cur, n, &rsrci->fragments, list) {
+			bno = cur->rm.rm_startblock + cur->rm.rm_blockcount;
+			if (cur->rm.rm_startblock != rbno)
+				goto fail;
+			list_del(&cur->list);
+			list_add_tail(&cur->list, &worklist);
+			if (next_rbno > bno)
+				next_rbno = bno;
+			nr--;
+			if (nr == 0)
+				break;
+		}
+
+		rbno = next_rbno;
+	}
+
+	/*
+	 * Make sure the last extent we processed ends at or beyond
+	 * the end of the refcount extent.
+	 */
+	if (rbno < rsrci->rc.rc_startblock + rsrci->rc.rc_blockcount)
+		goto fail;
+
+	rsrci->nr = rsrci->rc.rc_refcount;
+fail:
+	/* Delete fragments and work list. */
+	list_for_each_entry_safe(cur, n, &worklist, list) {
+		list_del(&cur->list);
+		kmem_free(cur);
+	}
+	list_for_each_entry_safe(cur, n, &rsrci->fragments, list) {
+		cur = list_first_entry(&rsrci->fragments,
+				struct xfs_scrub_refcountbt_fragment, list);
+		list_del(&cur->list);
+		kmem_free(cur);
+	}
+}
+
 /* Scrub a refcountbt record. */
 STATIC int
 xfs_scrub_refcountbt_helper(
@@ -48,6 +205,11 @@ xfs_scrub_refcountbt_helper(
 	struct xfs_agf			*agf;
 	struct xfs_scrub_ag		*psa;
 	struct xfs_refcount_irec	irec;
+	struct xfs_rmap_irec		low;
+	struct xfs_rmap_irec		high;
+	struct xfs_scrub_refcountbt_rmap_check_info	rsrci;
+	struct xfs_scrub_refcountbt_fragment		*cur;
+	struct xfs_scrub_refcountbt_fragment		*n;
 	xfs_agblock_t			eoag;
 	bool				has_cowflag;
 	bool				is_freesp;
@@ -107,6 +269,31 @@ xfs_scrub_refcountbt_helper(
 				&has_inodes);
 		if (xfs_scrub_btree_should_xref(bs, err2, &psa->fino_cur))
 			XFS_SCRUB_BTREC_CHECK(bs, !has_inodes);
+	}
+
+	/* Cross-reference with the rmapbt to confirm the refcount. */
+	if (psa->rmap_cur) {
+		memset(&low, 0, sizeof(low));
+		low.rm_startblock = irec.rc_startblock;
+		memset(&high, 0xFF, sizeof(high));
+		high.rm_startblock = irec.rc_startblock +
+				irec.rc_blockcount - 1;
+
+		rsrci.bs = bs;
+		rsrci.nr = 0;
+		rsrci.rc = irec;
+		INIT_LIST_HEAD(&rsrci.fragments);
+		err2 = xfs_rmap_query_range(psa->rmap_cur, &low, &high,
+				&xfs_scrub_refcountbt_rmap_check, &rsrci);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->rmap_cur)) {
+			xfs_scrub_refcountbt_process_rmap_fragments(mp, &rsrci);
+			XFS_SCRUB_BTREC_CHECK(bs, irec.rc_refcount == rsrci.nr);
+		}
+
+		list_for_each_entry_safe(cur, n, &rsrci.fragments, list) {
+			list_del(&cur->list);
+			kmem_free(cur);
+		}
 	}
 
 out:

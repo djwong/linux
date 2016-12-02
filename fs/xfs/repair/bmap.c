@@ -80,8 +80,13 @@ xfs_scrub_bmap_extent(
 	xfs_daddr_t			dlen;
 	xfs_agnumber_t			agno;
 	xfs_fsblock_t			bno;
+	struct xfs_rmap_irec		rmap;
+	uint64_t			owner;
+	xfs_fileoff_t			offset;
 	bool				is_freesp;
 	bool				has_inodes;
+	unsigned int			rflags;
+	int				has_rmap;
 	int				error = 0;
 	int				err2 = 0;
 
@@ -152,6 +157,90 @@ xfs_scrub_bmap_extent(
 				&has_inodes);
 		if (xfs_scrub_should_xref(info->sc, err2, &sa.fino_cur))
 			XFS_SCRUB_BMAP_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with rmapbt. */
+	if (sa.rmap_cur) {
+		if (info->whichfork == XFS_COW_FORK) {
+			owner = XFS_RMAP_OWN_COW;
+			offset = 0;
+		} else {
+			owner = ip->i_ino;
+			offset = irec->br_startoff;
+		}
+
+		/* Look for a corresponding rmap. */
+		rflags = 0;
+		if (info->whichfork == XFS_ATTR_FORK)
+			rflags |= XFS_RMAP_ATTR_FORK;
+
+		if (info->is_shared) {
+			err2 = xfs_rmap_lookup_le_range(sa.rmap_cur, bno, owner,
+					offset, rflags, &rmap,
+					&has_rmap);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.rmap_cur)) {
+				XFS_SCRUB_BMAP_GOTO(has_rmap, skip_rmap_xref);
+			} else
+				goto skip_rmap_xref;
+		} else {
+			err2 = xfs_rmap_lookup_le(sa.rmap_cur, bno, 0, owner,
+					offset, rflags, &has_rmap);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.rmap_cur)) {
+				XFS_SCRUB_BMAP_GOTO(has_rmap, skip_rmap_xref);
+			} else
+				goto skip_rmap_xref;
+
+			err2 = xfs_rmap_get_rec(sa.rmap_cur, &rmap,
+					&has_rmap);
+			if (xfs_scrub_should_xref(info->sc, err2,
+					&sa.rmap_cur)) {
+				XFS_SCRUB_BMAP_GOTO(has_rmap, skip_rmap_xref);
+			} else
+				goto skip_rmap_xref;
+		}
+
+		/* Check the rmap. */
+		XFS_SCRUB_BMAP_CHECK(rmap.rm_startblock <= bno);
+		XFS_SCRUB_BMAP_CHECK(rmap.rm_startblock <
+				rmap.rm_startblock + rmap.rm_blockcount);
+		XFS_SCRUB_BMAP_CHECK(bno + irec->br_blockcount <=
+				rmap.rm_startblock + rmap.rm_blockcount);
+		if (owner != XFS_RMAP_OWN_COW) {
+			XFS_SCRUB_BMAP_CHECK(rmap.rm_offset <= offset);
+			XFS_SCRUB_BMAP_CHECK(rmap.rm_offset <
+					rmap.rm_offset + rmap.rm_blockcount);
+			XFS_SCRUB_BMAP_CHECK(offset + irec->br_blockcount <=
+					rmap.rm_offset + rmap.rm_blockcount);
+		}
+		XFS_SCRUB_BMAP_CHECK(rmap.rm_owner == owner);
+		switch (irec->br_state) {
+		case XFS_EXT_UNWRITTEN:
+			XFS_SCRUB_BMAP_CHECK(
+					rmap.rm_flags & XFS_RMAP_UNWRITTEN);
+			break;
+		case XFS_EXT_NORM:
+			XFS_SCRUB_BMAP_CHECK(
+					!(rmap.rm_flags & XFS_RMAP_UNWRITTEN));
+			break;
+		default:
+			break;
+		}
+		switch (info->whichfork) {
+		case XFS_ATTR_FORK:
+			XFS_SCRUB_BMAP_CHECK(
+					rmap.rm_flags & XFS_RMAP_ATTR_FORK);
+			break;
+		case XFS_DATA_FORK:
+		case XFS_COW_FORK:
+			XFS_SCRUB_BMAP_CHECK(
+					!(rmap.rm_flags & XFS_RMAP_ATTR_FORK));
+			break;
+		}
+		XFS_SCRUB_BMAP_CHECK(!(rmap.rm_flags & XFS_RMAP_BMBT_BLOCK));
+skip_rmap_xref:
+		;
 	}
 
 	xfs_scrub_ag_free(&sa);

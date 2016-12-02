@@ -32,6 +32,7 @@
 #include "xfs_sb.h"
 #include "xfs_inode.h"
 #include "xfs_alloc.h"
+#include "xfs_rmap.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -513,6 +514,7 @@ xfs_scrub_btree_check_block_owner(
 	xfs_agnumber_t			agno;
 	xfs_agblock_t			bno;
 	bool				is_freesp;
+	bool				has_rmap;
 	int				error = 0;
 	int				err2;
 
@@ -534,6 +536,14 @@ xfs_scrub_btree_check_block_owner(
 		err2 = xfs_alloc_has_record(psa->bno_cur, bno, 1, &is_freesp);
 		if (xfs_scrub_btree_should_xref(bs, err2, NULL))
 			XFS_SCRUB_BTREC_CHECK(bs, !is_freesp);
+	}
+
+	/* Check that there's an rmap for this. */
+	if (psa->rmap_cur) {
+		err2 = xfs_rmap_record_exists(psa->rmap_cur, bno, 1, bs->oinfo,
+				&has_rmap);
+		if (xfs_scrub_btree_should_xref(bs, err2, NULL))
+			XFS_SCRUB_BTREC_CHECK(bs, has_rmap);
 	}
 
 	if (bs->cur->bc_flags & XFS_BTREE_LONG_PTRS)

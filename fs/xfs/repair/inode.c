@@ -36,6 +36,7 @@
 #include "xfs_inode_buf.h"
 #include "xfs_inode_fork.h"
 #include "xfs_ialloc.h"
+#include "xfs_rmap.h"
 #include "repair/common.h"
 
 /* Inode core */
@@ -69,6 +70,7 @@ xfs_scrub_inode(
 	uint16_t			flags;
 	uint16_t			mode;
 	int				error = 0;
+	int				err2;
 
 	/* Did we get the in-core inode, or are we doing this manually? */
 	if (sc->ip) {
@@ -253,6 +255,27 @@ xfs_scrub_inode(
 	if (xfs_is_reflink_inode(sc->ip)) {
 		ifp = XFS_IFORK_PTR(sc->ip, XFS_COW_FORK);
 		XFS_SCRUB_INODE_PREEN(ifp->if_bytes > 0);
+	}
+
+	/* Make sure the rmap thinks there's an inode here. */
+	if (xfs_sb_version_hasrmapbt(&mp->m_sb)) {
+		struct xfs_owner_info		oinfo;
+		struct xfs_scrub_ag		sa = {0};
+		xfs_agnumber_t			agno;
+		xfs_agblock_t			agbno;
+		bool				has_rmap;
+
+		agno = XFS_INO_TO_AGNO(mp, ino);
+		agbno = XFS_INO_TO_AGBNO(mp, ino);
+		xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_INODES);
+		error = xfs_scrub_ag_init(sc, agno, &sa);
+		XFS_SCRUB_INODE_OP_ERROR_GOTO(out);
+
+		err2 = xfs_rmap_record_exists(sa.rmap_cur, agbno,
+				1, &oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &sa.rmap_cur))
+			XFS_SCRUB_INODE_CHECK(has_rmap);
+		xfs_scrub_ag_free(&sa);
 	}
 
 out:

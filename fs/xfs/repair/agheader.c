@@ -32,6 +32,7 @@
 #include "xfs_sb.h"
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
+#include "xfs_rmap.h"
 #include "repair/common.h"
 
 /* Find the size of the AG, in blocks. */
@@ -141,10 +142,12 @@ xfs_scrub_superblock(
 	struct xfs_buf			*bp;
 	struct xfs_scrub_ag		*psa;
 	struct xfs_sb			sb;
+	struct xfs_owner_info		oinfo;
 	xfs_agnumber_t			agno;
 	uint32_t			v2_ok;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_rmap;
 	int				error;
 	int				err2;
 
@@ -297,6 +300,15 @@ btree_xref:
 			XFS_SCRUB_SB_CHECK(!has_inodes);
 	}
 
+	/* Cross-reference with the rmapbt. */
+	if (psa->rmap_cur) {
+		xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_FS);
+		err2 = xfs_rmap_record_exists(psa->rmap_cur, XFS_SB_BLOCK(mp),
+				1, &oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &psa->rmap_cur))
+			XFS_SCRUB_SB_CHECK(has_rmap);
+	}
+
 out:
 	return error;
 }
@@ -328,6 +340,7 @@ int
 xfs_scrub_agf(
 	struct xfs_scrub_context	*sc)
 {
+	struct xfs_owner_info		oinfo;
 	struct xfs_mount		*mp = sc->tp->t_mountp;
 	struct xfs_agf			*agf;
 	struct xfs_scrub_ag		*psa;
@@ -341,8 +354,10 @@ xfs_scrub_agf(
 	xfs_agblock_t			agfl_count;
 	xfs_agblock_t			fl_count;
 	xfs_extlen_t			blocks;
+	xfs_extlen_t			btreeblks = 0;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_rmap;
 	int				have;
 	int				level;
 	int				error = 0;
@@ -478,6 +493,37 @@ skip_cntbt:
 			XFS_SCRUB_AGF_CHECK(!has_inodes);
 	}
 
+	/* Cross-reference with the rmapbt. */
+	if (psa->rmap_cur) {
+		xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_FS);
+		err2 = xfs_rmap_record_exists(psa->rmap_cur, XFS_AGF_BLOCK(mp),
+				1, &oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &psa->rmap_cur))
+			XFS_SCRUB_AGF_CHECK(has_rmap);
+	}
+	if (psa->rmap_cur) {
+		err2 = xfs_btree_count_blocks(psa->rmap_cur, &blocks);
+		if (xfs_scrub_should_xref(sc, err2, &psa->rmap_cur)) {
+			btreeblks = blocks - 1;
+			XFS_SCRUB_AGF_CHECK(blocks == be32_to_cpu(
+					agf->agf_rmap_blocks));
+		}
+	}
+
+	/* Check btreeblks */
+	if ((!xfs_sb_version_hasrmapbt(&mp->m_sb) || psa->rmap_cur) &&
+	    psa->bno_cur && psa->cnt_cur) {
+		err2 = xfs_btree_count_blocks(psa->bno_cur, &blocks);
+		if (xfs_scrub_should_xref(sc, err2, &psa->bno_cur))
+			btreeblks += blocks - 1;
+		err2 = xfs_btree_count_blocks(psa->cnt_cur, &blocks);
+		if (xfs_scrub_should_xref(sc, err2, &psa->cnt_cur))
+			btreeblks += blocks - 1;
+		if (psa->bno_cur && psa->cnt_cur)
+			XFS_SCRUB_AGF_CHECK(btreeblks == be32_to_cpu(
+					agf->agf_btreeblks));
+	}
+
 out:
 	return error;
 }
@@ -489,6 +535,7 @@ out:
 #define XFS_SCRUB_AGFL_CHECK(fs_ok) \
 	XFS_SCRUB_CHECK(sc, sc->sa.agfl_bp, "AGFL", fs_ok)
 struct xfs_scrub_agfl {
+	struct xfs_owner_info		oinfo;
 	xfs_agblock_t			eoag;
 	xfs_daddr_t			eofs;
 };
@@ -505,6 +552,7 @@ xfs_scrub_agfl_block(
 	struct xfs_scrub_agfl		*sagfl = priv;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_rmap;
 	int				err2;
 
 	XFS_SCRUB_AGFL_CHECK(agbno > XFS_AGI_BLOCK(mp));
@@ -539,6 +587,14 @@ xfs_scrub_agfl_block(
 			XFS_SCRUB_AGFL_CHECK(!has_inodes);
 	}
 
+	/* Cross-reference with the rmapbt. */
+	if (sc->sa.rmap_cur) {
+		err2 = xfs_rmap_record_exists(sc->sa.rmap_cur, agbno, 1,
+				&sagfl->oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.rmap_cur))
+			XFS_SCRUB_AGFL_CHECK(has_rmap);
+	}
+
 	return 0;
 }
 
@@ -554,6 +610,8 @@ xfs_scrub_agfl(
 	struct xfs_mount		*mp = sc->tp->t_mountp;
 	struct xfs_agf			*agf;
 	bool				is_freesp;
+	bool				has_inodes;
+	bool				has_rmap;
 	int				error;
 	int				err2;
 
@@ -575,7 +633,33 @@ xfs_scrub_agfl(
 			XFS_SCRUB_AGFL_CHECK(!is_freesp);
 	}
 
+	/* Cross-reference with inobt. */
+	if (sc->sa.ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sc->sa.ino_cur,
+			XFS_AGFL_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.ino_cur))
+			XFS_SCRUB_AGFL_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (sc->sa.fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sc->sa.fino_cur,
+				XFS_AGFL_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.fino_cur))
+			XFS_SCRUB_AGFL_CHECK(!has_inodes);
+	}
+
+	/* Set up cross-reference with rmapbt. */
+	if (sc->sa.rmap_cur) {
+		xfs_rmap_ag_owner(&sagfl.oinfo, XFS_RMAP_OWN_FS);
+		err2 = xfs_rmap_record_exists(sc->sa.rmap_cur,
+				XFS_AGFL_BLOCK(mp), 1, &sagfl.oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.rmap_cur))
+			XFS_SCRUB_AGFL_CHECK(has_rmap);
+	}
+
 	/* Check the blocks in the AGFL. */
+	xfs_rmap_ag_owner(&sagfl.oinfo, XFS_RMAP_OWN_AG);
 	return xfs_scrub_walk_agfl(sc, xfs_scrub_agfl_block, &sagfl);
 out:
 	return error;
@@ -595,6 +679,7 @@ int
 xfs_scrub_agi(
 	struct xfs_scrub_context	*sc)
 {
+	struct xfs_owner_info		oinfo;
 	struct xfs_mount		*mp = sc->tp->t_mountp;
 	struct xfs_agi			*agi;
 	struct xfs_scrub_ag		*psa;
@@ -610,6 +695,7 @@ xfs_scrub_agi(
 	xfs_agino_t			freecount;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_rmap;
 	int				i;
 	int				level;
 	int				error = 0;
@@ -719,6 +805,15 @@ skip_inobt_xref:
 				XFS_AGI_BLOCK(mp), 1, &has_inodes);
 		if (xfs_scrub_should_xref(sc, err2, &psa->fino_cur))
 			XFS_SCRUB_AGI_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with the rmapbt. */
+	if (psa->rmap_cur) {
+		xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_FS);
+		err2 = xfs_rmap_record_exists(psa->rmap_cur, XFS_AGI_BLOCK(mp),
+				1, &oinfo, &has_rmap);
+		if (xfs_scrub_should_xref(sc, err2, &psa->rmap_cur))
+			XFS_SCRUB_AGI_CHECK(has_rmap);
 	}
 
 out:

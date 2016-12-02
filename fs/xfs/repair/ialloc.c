@@ -54,16 +54,19 @@ xfs_scrub_iallocbt_chunk(
 	struct xfs_agf			*agf;
 	struct xfs_scrub_ag		*psa;
 	struct xfs_btree_cur		**xcur;
+	struct xfs_owner_info		oinfo;
 	xfs_agblock_t			eoag;
 	xfs_agblock_t			bno;
 	bool				is_freesp;
 	bool				has_inodes;
+	bool				has_rmap;
 	int				error = 0;
 	int				err2;
 
 	agf = XFS_BUF_TO_AGF(bs->sc->sa.agf_bp);
 	eoag = be32_to_cpu(agf->agf_length);
 	bno = XFS_AGINO_TO_AGBNO(mp, agino);
+	xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_INODES);
 
 	*keep_scanning = true;
 	XFS_SCRUB_BTREC_CHECK(bs, bno < mp->m_sb.sb_agblocks);
@@ -105,6 +108,14 @@ xfs_scrub_iallocbt_chunk(
 			XFS_SCRUB_BTREC_CHECK(bs, has_inodes);
 	}
 
+	/* Cross-reference with rmapbt. */
+	if (psa->rmap_cur) {
+		err2 = xfs_rmap_record_exists(psa->rmap_cur, bno,
+				len, &oinfo, &has_rmap);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->rmap_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, has_rmap);
+	}
+
 out:
 	return error;
 }
@@ -137,6 +148,7 @@ xfs_scrub_iallocbt_check_freemask(
 	struct xfs_mount		*mp = bs->cur->bc_mp;
 	struct xfs_dinode		*dip;
 	struct xfs_buf			*bp;
+	struct xfs_scrub_ag		*psa;
 	xfs_ino_t			fsino;
 	xfs_agino_t			nr_inodes;
 	xfs_agino_t			agino;
@@ -146,12 +158,15 @@ xfs_scrub_iallocbt_check_freemask(
 	int				blks_per_cluster;
 	__uint16_t			holemask;
 	__uint16_t			ir_holemask;
+	bool				has;
 	int				error = 0;
+	int				err2;
 
 	/* Make sure the freemask matches the inode records. */
 	blks_per_cluster = xfs_icluster_size_fsb(mp);
 	nr_inodes = XFS_OFFBNO_TO_AGINO(mp, blks_per_cluster, 0);
 	xfs_rmap_ag_owner(&oinfo, XFS_RMAP_OWN_INODES);
+	psa = &bs->sc->sa;
 
 	for (agino = irec->ir_startino;
 	     agino < irec->ir_startino + XFS_INODES_PER_CHUNK;
@@ -171,6 +186,21 @@ xfs_scrub_iallocbt_check_freemask(
 		XFS_SCRUB_BTREC_CHECK(bs, ir_holemask == holemask ||
 				ir_holemask == 0);
 
+		/* Does the rmap agree that we have inodes here? */
+		if (psa->rmap_cur) {
+			err2 = xfs_rmap_record_exists(psa->rmap_cur, agbno,
+					blks_per_cluster, &oinfo, &has);
+			if (!xfs_scrub_btree_should_xref(bs, err2,
+					&psa->rmap_cur))
+				goto skip_xref;
+			if (has)
+				XFS_SCRUB_BTREC_CHECK(bs, ir_holemask == 0);
+			else
+				XFS_SCRUB_BTREC_CHECK(bs,
+						ir_holemask == holemask);
+		}
+
+skip_xref:
 		/* If any part of this is a hole, skip it. */
 		if (ir_holemask)
 			goto next_cluster;
