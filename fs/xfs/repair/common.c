@@ -644,6 +644,7 @@ xfs_scrub_teardown(
 	int				error)
 {
 	struct xfs_mount		*mp = sc->tp->t_mountp;
+	int				err2;
 
 	xfs_scrub_ag_free(&sc->sa);
 	if (sc->ag_lock.agmask != sc->ag_lock.__agmask)
@@ -654,6 +655,13 @@ xfs_scrub_teardown(
 	else
 		xfs_trans_cancel(sc->tp);
 	sc->tp = NULL;
+
+	if (sc->teardown) {
+		err2 = sc->teardown(sc, ip_in, error);
+		if (!error && err2)
+			error = err2;
+	}
+
 	if (sc->ip != NULL) {
 		xfs_iunlock(sc->ip, XFS_ILOCK_EXCL);
 		xfs_iunlock(sc->ip, XFS_IOLOCK_EXCL);
@@ -785,6 +793,78 @@ xfs_scrub_setup_ag_header(
 		xfs_trans_cancel(sc->tp);
 out:
 	return error;
+}
+
+/* Unfreeze the FS. */
+STATIC int
+xfs_scrub_teardown_thaw(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	int				error)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+	struct super_block		*sb = mp->m_super;
+	int				err2;
+
+	/* Re-freeze the last level of filesystem. */
+	down_write(&sb->s_umount);
+	percpu_down_write(sb->s_writers.rw_sem + SB_FREEZE_PAGEFAULT);
+	sb->s_writers.frozen = SB_FREEZE_COMPLETE;
+	up_write(&sb->s_umount);
+	err2 = thaw_super(sb);
+	if (!error && err2)
+		error = err2;
+
+	return error;
+}
+
+/* Set us up with AG headers and btree cursors, and freeze the FS. */
+STATIC int
+xfs_scrub_setup_ag_header_freeze(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip,
+	struct xfs_scrub_metadata	*sm,
+	bool				retry_deadlocked)
+{
+	struct xfs_mount		*mp = ip->i_mount;
+	struct super_block		*sb = mp->m_super;
+	int				error;
+
+	if (!(sm->sm_flags & XFS_SCRUB_FLAG_REPAIR))
+		return xfs_scrub_setup_ag_header(sc, ip, sm, retry_deadlocked);
+
+	/* Freeze out any further writes or page faults. */
+	error = freeze_super(sb);
+	if (error)
+		return error;
+
+	/* Thaw it to the point that we can make transactions. */
+	down_write(&sb->s_umount);
+	percpu_up_write(sb->s_writers.rw_sem + SB_FREEZE_PAGEFAULT);
+	sb->s_writers.frozen = SB_FREEZE_FS;
+	up_write(&sb->s_umount);
+
+	/* Check the AG number and set up the scrub context. */
+	error = xfs_scrub_setup_ag(sc, ip, sm, retry_deadlocked);
+	if (error)
+		return xfs_scrub_teardown_thaw(sc, ip, error);
+
+	/* Lock all the AG header buffers. */
+	sc->teardown = xfs_scrub_teardown_thaw;
+	xfs_scrub_ag_lock_init(mp, &sc->ag_lock);
+	error = xfs_scrub_ag_lock_all(sc);
+	if (error)
+		return error;
+
+	/* Now grab the headers of the AGF we want. */
+	sc->sa.agno = sm->sm_agno;
+	error = xfs_scrub_ag_read_headers(sc, sm->sm_agno, &sc->sa.agi_bp,
+			&sc->sa.agf_bp, &sc->sa.agfl_bp);
+	if (error)
+		return error;
+
+	/* ...and initialize the btree cursors for xref. */
+	return xfs_scrub_ag_btcur_init(sc, &sc->sa);
 }
 
 /*
@@ -1010,7 +1090,7 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_ag_header, xfs_scrub_cntbt, xfs_repair_allocbt, NULL},
 	{xfs_scrub_setup_ag_header, xfs_scrub_inobt, xfs_repair_iallocbt, NULL},
 	{xfs_scrub_setup_ag_header, xfs_scrub_finobt, xfs_repair_iallocbt, xfs_sb_version_hasfinobt},
-	{xfs_scrub_setup_ag_header, xfs_scrub_rmapbt, NULL, xfs_sb_version_hasrmapbt},
+	{xfs_scrub_setup_ag_header_freeze, xfs_scrub_rmapbt, xfs_repair_rmapbt, xfs_sb_version_hasrmapbt},
 	{xfs_scrub_setup_ag_header, xfs_scrub_refcountbt, NULL, xfs_sb_version_hasreflink},
 	{xfs_scrub_setup_inode_raw, xfs_scrub_inode, NULL, NULL},
 	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_data, NULL, NULL},
