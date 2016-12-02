@@ -67,6 +67,9 @@ struct xfs_scrub_context {
 
 	/* State tracking for single-AG operations. */
 	struct xfs_scrub_ag		sa;
+
+	int				(*teardown)(struct xfs_scrub_context *,
+						    struct xfs_inode *, int);
 };
 
 /* Should we end the scrub early? */
@@ -286,5 +289,6 @@ int xfs_repair_agfl(struct xfs_scrub_context *sc);
 int xfs_repair_agi(struct xfs_scrub_context *sc);
 int xfs_repair_allocbt(struct xfs_scrub_context *sc);
 int xfs_repair_iallocbt(struct xfs_scrub_context *sc);
+int xfs_repair_rmapbt(struct xfs_scrub_context *sc);
 
 #endif	/* __XFS_REPAIR_COMMON_H__ */
