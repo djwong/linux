@@ -101,6 +101,11 @@ xfs-y				+= xfs_aops.o \
 				   kmem.o \
 				   uuid.o
 
+# online scrub/repair
+xfs-$(CONFIG_XFS_ONLINE_REPAIR)	+= $(addprefix repair/, \
+				   common.o \
+				   )
+
 # low-level transaction/log code
 xfs-y				+= xfs_log.o \
 				   xfs_log_cil.o \

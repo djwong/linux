@@ -96,3 +96,19 @@ config XFS_DEBUG
 	  not useful unless you are debugging a particular problem.
 
 	  Say N unless you are an XFS developer, or you play one on TV.
+
+config XFS_ONLINE_REPAIR
+	bool "XFS Online Scrub and Repair"
+	depends on XFS_FS
+	help
+	  If you say Y here you will be able to use the xfs_scrub
+	  program to check and repair XFS metadata on mounted
+	  filesystems.  The online scrub feature checks all filesystem
+	  metadata for corruption and inconsistencies.  The online
+	  repair feature can correct minor problems with the filesystem
+	  metadata, though more thorough repairs still require
+	  xfs_repair.  This configure option will disappear when the
+	  feature matures and becomes a regular part of XFS.
+
+	  Say N unless are an XFS developer with good backups!
+	  This code is not yet mature!
