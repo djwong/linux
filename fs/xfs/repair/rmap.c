@@ -33,6 +33,7 @@
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
+#include "xfs_refcount.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -48,13 +49,18 @@ xfs_scrub_rmapbt_helper(
 	struct xfs_agf			*agf;
 	struct xfs_scrub_ag		*psa;
 	struct xfs_rmap_irec		irec;
+	struct xfs_refcount_irec	crec;
 	xfs_agblock_t			eoag;
+	xfs_agblock_t			fbno;
+	xfs_extlen_t			flen;
 	bool				is_freesp;
 	bool				non_inode;
 	bool				is_unwritten;
 	bool				is_bmbt;
 	bool				is_attr;
 	bool				has_inodes;
+	bool				has_cowflag;
+	int				has_refcount;
 	int				error = 0;
 	int				err2;
 
@@ -142,6 +148,60 @@ xfs_scrub_rmapbt_helper(
 			XFS_SCRUB_BTREC_CHECK(bs,
 					irec.rm_owner == XFS_RMAP_OWN_INODES ||
 					!has_inodes);
+	}
+
+	/* Cross-reference with the refcount btree. */
+	if (psa->refc_cur) {
+		if (irec.rm_owner == XFS_RMAP_OWN_COW) {
+			/* Check this CoW staging extent. */
+			err2 = xfs_refcount_lookup_le(psa->refc_cur,
+					irec.rm_startblock + XFS_REFC_COW_START,
+					&has_refcount);
+			if (xfs_scrub_btree_should_xref(bs, err2,
+					&psa->refc_cur)) {
+				XFS_SCRUB_BTREC_GOTO(bs, has_refcount,
+						skip_refc_xref);
+			} else
+				goto skip_refc_xref;
+
+			err2 = xfs_refcount_get_rec(psa->refc_cur, &crec,
+					&has_refcount);
+			if (xfs_scrub_btree_should_xref(bs, err2,
+					&psa->refc_cur)) {
+				XFS_SCRUB_BTREC_GOTO(bs, has_refcount,
+						skip_refc_xref);
+			} else
+				goto skip_refc_xref;
+
+			has_cowflag = !!(crec.rc_startblock & XFS_REFC_COW_START);
+			XFS_SCRUB_BTREC_CHECK(bs,
+					(crec.rc_refcount == 1 && has_cowflag) ||
+					(crec.rc_refcount != 1 && !has_cowflag));
+			crec.rc_startblock &= ~XFS_REFC_COW_START;
+			XFS_SCRUB_BTREC_CHECK(bs, crec.rc_startblock <=
+					irec.rm_startblock);
+			XFS_SCRUB_BTREC_CHECK(bs, crec.rc_startblock +
+					crec.rc_blockcount >
+					crec.rc_startblock);
+			XFS_SCRUB_BTREC_CHECK(bs, crec.rc_startblock +
+					crec.rc_blockcount >=
+					irec.rm_startblock +
+					irec.rm_blockcount);
+			XFS_SCRUB_BTREC_CHECK(bs,
+					crec.rc_refcount == 1);
+		} else {
+			/* If this is shared, the inode flag must be set. */
+			err2 = xfs_refcount_find_shared(psa->refc_cur,
+					irec.rm_startblock, irec.rm_blockcount,
+					&fbno, &flen, false);
+			if (xfs_scrub_btree_should_xref(bs, err2,
+					&psa->refc_cur))
+				XFS_SCRUB_BTREC_CHECK(bs, flen == 0 ||
+						(!non_inode && !is_attr &&
+						 !is_bmbt && !is_unwritten));
+		}
+skip_refc_xref:
+		;
 	}
 
 out:

@@ -33,6 +33,7 @@
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
+#include "xfs_refcount.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -54,6 +55,7 @@ xfs_scrub_allocbt_helper(
 	xfs_extlen_t			len;
 	bool				has_rmap;
 	bool				has_inodes;
+	bool				has_refcount;
 	int				has_otherrec;
 	int				error = 0;
 	int				err2;
@@ -119,6 +121,14 @@ xfs_scrub_allocbt_helper(
 				&has_rmap);
 		if (xfs_scrub_btree_should_xref(bs, err2, &psa->rmap_cur))
 			XFS_SCRUB_BTREC_CHECK(bs, !has_rmap);
+	}
+
+	/* Cross-reference with the refcountbt. */
+	if (psa->refc_cur) {
+		err2 = xfs_refcount_has_record(psa->refc_cur, bno, len,
+				&has_refcount);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->refc_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, !has_refcount);
 	}
 
 out:
