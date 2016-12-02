@@ -31,6 +31,7 @@
 #include "xfs_trace.h"
 #include "xfs_sb.h"
 #include "xfs_alloc.h"
+#include "xfs_ialloc.h"
 #include "repair/common.h"
 
 /* Find the size of the AG, in blocks. */
@@ -143,6 +144,7 @@ xfs_scrub_superblock(
 	xfs_agnumber_t			agno;
 	uint32_t			v2_ok;
 	bool				is_freesp;
+	bool				has_inodes;
 	int				error;
 	int				err2;
 
@@ -279,6 +281,22 @@ btree_xref:
 			XFS_SCRUB_SB_CHECK(!is_freesp);
 	}
 
+	/* Cross-reference with inobt. */
+	if (psa->ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->ino_cur,
+				XFS_SB_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &psa->ino_cur))
+			XFS_SCRUB_SB_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (psa->fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->fino_cur,
+				XFS_SB_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &psa->fino_cur))
+			XFS_SCRUB_SB_CHECK(!has_inodes);
+	}
+
 out:
 	return error;
 }
@@ -324,6 +342,7 @@ xfs_scrub_agf(
 	xfs_agblock_t			fl_count;
 	xfs_extlen_t			blocks;
 	bool				is_freesp;
+	bool				has_inodes;
 	int				have;
 	int				level;
 	int				error = 0;
@@ -443,6 +462,22 @@ skip_bnobt:
 	}
 skip_cntbt:
 
+	/* Cross-reference with inobt. */
+	if (psa->ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->ino_cur,
+				XFS_AGF_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &psa->ino_cur))
+			XFS_SCRUB_AGF_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (psa->fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->fino_cur,
+				XFS_AGF_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &psa->fino_cur))
+			XFS_SCRUB_AGF_CHECK(!has_inodes);
+	}
+
 out:
 	return error;
 }
@@ -469,6 +504,7 @@ xfs_scrub_agfl_block(
 	xfs_agnumber_t			agno = sc->sa.agno;
 	struct xfs_scrub_agfl		*sagfl = priv;
 	bool				is_freesp;
+	bool				has_inodes;
 	int				err2;
 
 	XFS_SCRUB_AGFL_CHECK(agbno > XFS_AGI_BLOCK(mp));
@@ -485,6 +521,22 @@ xfs_scrub_agfl_block(
 				1, &is_freesp);
 		if (xfs_scrub_should_xref(sc, err2, &sc->sa.bno_cur))
 			XFS_SCRUB_AGFL_CHECK(!is_freesp);
+	}
+
+	/* Cross-reference with inobt. */
+	if (sc->sa.ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sc->sa.ino_cur,
+				agbno, 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.ino_cur))
+			XFS_SCRUB_AGFL_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (sc->sa.fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sc->sa.fino_cur,
+				agbno, 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &sc->sa.fino_cur))
+			XFS_SCRUB_AGFL_CHECK(!has_inodes);
 	}
 
 	return 0;
@@ -554,7 +606,10 @@ xfs_scrub_agi(
 	xfs_agino_t			agino;
 	xfs_agino_t			first_agino;
 	xfs_agino_t			last_agino;
+	xfs_agino_t			count;
+	xfs_agino_t			freecount;
 	bool				is_freesp;
+	bool				has_inodes;
 	int				i;
 	int				level;
 	int				error = 0;
@@ -638,6 +693,32 @@ xfs_scrub_agi(
 				1, &is_freesp);
 		if (xfs_scrub_should_xref(sc, err2, &psa->bno_cur))
 			XFS_SCRUB_AGI_CHECK(!is_freesp);
+	}
+
+	/* Cross-reference with inobt. */
+	if (psa->ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->ino_cur,
+				XFS_AGI_BLOCK(mp), 1, &has_inodes);
+		if (!xfs_scrub_should_xref(sc, err2, &psa->ino_cur))
+			goto skip_inobt_xref;
+		XFS_SCRUB_AGI_CHECK(!has_inodes);
+		err2 = xfs_ialloc_count_inodes(psa->ino_cur, &count,
+				&freecount);
+		if (xfs_scrub_should_xref(sc, err2, &psa->ino_cur)) {
+			XFS_SCRUB_AGI_CHECK(be32_to_cpu(agi->agi_count) ==
+					count);
+			XFS_SCRUB_AGI_CHECK(be32_to_cpu(agi->agi_freecount) ==
+					freecount);
+		}
+	}
+
+skip_inobt_xref:
+	/* Cross-reference with finobt. */
+	if (psa->fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->fino_cur,
+				XFS_AGI_BLOCK(mp), 1, &has_inodes);
+		if (xfs_scrub_should_xref(sc, err2, &psa->fino_cur))
+			XFS_SCRUB_AGI_CHECK(!has_inodes);
 	}
 
 out:

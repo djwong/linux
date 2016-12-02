@@ -32,6 +32,7 @@
 #include "xfs_sb.h"
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
+#include "xfs_ialloc.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -51,6 +52,7 @@ xfs_scrub_allocbt_helper(
 	xfs_agblock_t			bno;
 	xfs_extlen_t			flen;
 	xfs_extlen_t			len;
+	bool				has_inodes;
 	int				has_otherrec;
 	int				error = 0;
 	int				err2;
@@ -92,6 +94,22 @@ xfs_scrub_allocbt_helper(
 				XFS_SCRUB_BTREC_CHECK(bs, flen == len);
 			}
 		}
+	}
+
+	/* Cross-reference with inobt. */
+	if (psa->ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->ino_cur, bno,
+				len, &has_inodes);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->ino_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, !has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (psa->fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(psa->fino_cur, bno,
+				len, &has_inodes);
+		if (xfs_scrub_btree_should_xref(bs, err2, &psa->fino_cur))
+			XFS_SCRUB_BTREC_CHECK(bs, !has_inodes);
 	}
 
 out:
