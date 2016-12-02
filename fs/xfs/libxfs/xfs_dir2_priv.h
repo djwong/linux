@@ -131,5 +131,7 @@ extern int xfs_dir2_sf_replace(struct xfs_da_args *args);
 /* xfs_dir2_readdir.c */
 extern int xfs_readdir(struct xfs_inode *dp, struct dir_context *ctx,
 		       size_t bufsize);
+extern int xfs_readdir_trans(struct xfs_trans *tp, struct xfs_inode *dp,
+		       struct dir_context *ctx, size_t bufsize);
 
 #endif /* __XFS_DIR2_PRIV_H__ */
