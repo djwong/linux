@@ -115,6 +115,7 @@ xfs-$(CONFIG_XFS_ONLINE_REPAIR)	+= $(addprefix repair/, \
 				   inode.o \
 				   refcount.o \
 				   rmap.o \
+				   symlink.o \
 				   )
 
 # low-level transaction/log code
