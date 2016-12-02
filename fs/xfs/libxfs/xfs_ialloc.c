@@ -99,6 +99,30 @@ xfs_inobt_update(
 	return xfs_btree_update(cur, &rec);
 }
 
+void
+xfs_inobt_btrec_to_irec(
+	struct xfs_mount		*mp,
+	union xfs_btree_rec		*rec,
+	struct xfs_inobt_rec_incore	*irec)
+{
+	irec->ir_startino = be32_to_cpu(rec->inobt.ir_startino);
+	if (xfs_sb_version_hassparseinodes(&mp->m_sb)) {
+		irec->ir_holemask = be16_to_cpu(rec->inobt.ir_u.sp.ir_holemask);
+		irec->ir_count = rec->inobt.ir_u.sp.ir_count;
+		irec->ir_freecount = rec->inobt.ir_u.sp.ir_freecount;
+	} else {
+		/*
+		 * ir_holemask/ir_count not supported on-disk. Fill in hardcoded
+		 * values for full inode chunks.
+		 */
+		irec->ir_holemask = XFS_INOBT_HOLEMASK_FULL;
+		irec->ir_count = XFS_INODES_PER_CHUNK;
+		irec->ir_freecount =
+				be32_to_cpu(rec->inobt.ir_u.f.ir_freecount);
+	}
+	irec->ir_free = be64_to_cpu(rec->inobt.ir_free);
+}
+
 /*
  * Get the data from the pointed-to record.
  */
@@ -115,22 +139,7 @@ xfs_inobt_get_rec(
 	if (error || *stat == 0)
 		return error;
 
-	irec->ir_startino = be32_to_cpu(rec->inobt.ir_startino);
-	if (xfs_sb_version_hassparseinodes(&cur->bc_mp->m_sb)) {
-		irec->ir_holemask = be16_to_cpu(rec->inobt.ir_u.sp.ir_holemask);
-		irec->ir_count = rec->inobt.ir_u.sp.ir_count;
-		irec->ir_freecount = rec->inobt.ir_u.sp.ir_freecount;
-	} else {
-		/*
-		 * ir_holemask/ir_count not supported on-disk. Fill in hardcoded
-		 * values for full inode chunks.
-		 */
-		irec->ir_holemask = XFS_INOBT_HOLEMASK_FULL;
-		irec->ir_count = XFS_INODES_PER_CHUNK;
-		irec->ir_freecount =
-				be32_to_cpu(rec->inobt.ir_u.f.ir_freecount);
-	}
-	irec->ir_free = be64_to_cpu(rec->inobt.ir_free);
+	xfs_inobt_btrec_to_irec(cur->bc_mp, rec, irec);
 
 	return 0;
 }
