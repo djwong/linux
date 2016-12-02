@@ -20,11 +20,51 @@
 #ifndef __XFS_REPAIR_COMMON_H__
 #define __XFS_REPAIR_COMMON_H__
 
+/* Buffer pointers and btree cursors for an entire AG. */
+struct xfs_scrub_ag {
+	xfs_agnumber_t			agno;
+
+	/* AG btree roots */
+	struct xfs_buf			*agf_bp;
+	struct xfs_buf			*agfl_bp;
+	struct xfs_buf			*agi_bp;
+
+	/* AG btrees */
+	struct xfs_btree_cur		*bno_cur;
+	struct xfs_btree_cur		*cnt_cur;
+	struct xfs_btree_cur		*ino_cur;
+	struct xfs_btree_cur		*fino_cur;
+	struct xfs_btree_cur		*rmap_cur;
+	struct xfs_btree_cur		*refc_cur;
+};
+
+/*
+ * Track which AGs for which we've already locked the header buffers.
+ * This information helps us avoid deadlocks by ensuring locking order
+ * rule compliance.  max_ag is the highest AG number that we've locked;
+ * we can only re-lock an AG we've already locked, or lock a higher AG.
+ * If we try to lock a lower numbered AG, we must restart the operation
+ * with all AG headers locked from the beginning.
+ */
+#define XFS_SCRUB_AGMASK_NR		128
+struct xfs_scrub_ag_lock {
+	xfs_agnumber_t			max_ag;
+	unsigned long			*agmask;
+	unsigned long			__agmask[XFS_SCRUB_AGMASK_NR /
+						 sizeof(unsigned long)];
+};
+
 struct xfs_scrub_context {
 	/* General scrub state. */
 	struct xfs_scrub_metadata	*sm;
 	struct xfs_trans		*tp;
 	struct xfs_inode		*ip;
+
+	/* State tracking for multi-AG operations. */
+	struct xfs_scrub_ag_lock	ag_lock;
+
+	/* State tracking for single-AG operations. */
+	struct xfs_scrub_ag		sa;
 };
 
 /* Should we end the scrub early? */
@@ -137,5 +177,13 @@ bool xfs_scrub_data_ok(struct xfs_scrub_context *sc, int whichfork,
 				(type), (fs_ok), #fs_ok, __func__, __LINE__)) \
 			goto label; \
 	} while(0)
+
+bool xfs_scrub_ag_can_lock(struct xfs_scrub_context *sc, xfs_agnumber_t agno);
+int xfs_scrub_ag_lock_all(struct xfs_scrub_context *sc);
+void xfs_scrub_ag_free(struct xfs_scrub_ag *sa);
+int xfs_scrub_ag_init(struct xfs_scrub_context *sc, xfs_agnumber_t agno,
+		      struct xfs_scrub_ag *sa);
+int xfs_scrub_ag_btcur_init(struct xfs_scrub_context *sc,
+			    struct xfs_scrub_ag *sa);
 
 #endif	/* __XFS_REPAIR_COMMON_H__ */
