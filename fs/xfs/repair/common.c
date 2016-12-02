@@ -1005,7 +1005,7 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_ag, xfs_scrub_superblock, xfs_repair_superblock, NULL},
 	{xfs_scrub_setup_ag, xfs_scrub_agf, xfs_repair_agf, NULL},
 	{xfs_scrub_setup_ag, xfs_scrub_agfl, xfs_repair_agfl, NULL},
-	{xfs_scrub_setup_ag, xfs_scrub_agi, NULL, NULL},
+	{xfs_scrub_setup_ag, xfs_scrub_agi, xfs_repair_agi, NULL},
 	{xfs_scrub_setup_ag_header, xfs_scrub_bnobt, NULL, NULL},
 	{xfs_scrub_setup_ag_header, xfs_scrub_cntbt, NULL, NULL},
 	{xfs_scrub_setup_ag_header, xfs_scrub_inobt, NULL, NULL},
