@@ -701,6 +701,8 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_ag, xfs_scrub_agf, NULL, NULL},
 	{xfs_scrub_setup_ag, xfs_scrub_agfl, NULL, NULL},
 	{xfs_scrub_setup_ag, xfs_scrub_agi, NULL, NULL},
+	{xfs_scrub_setup_ag_header, xfs_scrub_bnobt, NULL, NULL},
+	{xfs_scrub_setup_ag_header, xfs_scrub_cntbt, NULL, NULL},
 };
 
 /* Dispatch metadata scrubbing. */

@@ -104,6 +104,7 @@ xfs-y				+= xfs_aops.o \
 # online scrub/repair
 xfs-$(CONFIG_XFS_ONLINE_REPAIR)	+= $(addprefix repair/, \
 				   agheader.o \
+				   alloc.o \
 				   btree.o \
 				   common.o \
 				   )
