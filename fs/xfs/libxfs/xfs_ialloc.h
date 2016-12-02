@@ -177,5 +177,8 @@ int xfs_ialloc_has_inode_record(struct xfs_btree_cur *cur, xfs_agino_t low,
 		xfs_agino_t high, bool *exists);
 int xfs_ialloc_count_inodes(struct xfs_btree_cur *cur, xfs_agino_t *count,
 		xfs_agino_t *freecount);
+int xfs_inobt_insert_rec(struct xfs_btree_cur *cur, __uint16_t holemask,
+		__uint8_t count, __int32_t freecount, xfs_inofree_t free,
+		int *stat);
 
 #endif	/* __XFS_IALLOC_H__ */
