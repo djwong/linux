@@ -956,6 +956,7 @@ __xfs_scrub_setup_inode(
 	resblks = xfs_bmbt_calc_size(mp,
 			max_t(xfs_extnum_t, sc->ip->i_d.di_nextents,
 				sc->ip->i_d.di_anextents));
+	resblks = max_t(unsigned long long, resblks, XFS_SYMLINK_MAPS);
 	error = xfs_scrub_trans_alloc(sm, mp, &M_RES(mp)->tr_itruncate,
 			resblks, 0, 0, &sc->tp);
 	if (error)
@@ -1160,7 +1161,7 @@ static const struct xfs_scrub_meta_fns meta_scrub_fns[] = {
 	{xfs_scrub_setup_inode_bmap, xfs_scrub_bmap_cow, NULL, NULL},
 	{xfs_scrub_setup_inode, xfs_scrub_directory, NULL, NULL},
 	{xfs_scrub_setup_inode_xattr, xfs_scrub_xattr, NULL, NULL},
-	{xfs_scrub_setup_inode_symlink, xfs_scrub_symlink, NULL, NULL},
+	{xfs_scrub_setup_inode_symlink, xfs_scrub_symlink, xfs_repair_symlink, NULL},
 	{xfs_scrub_setup_rt, xfs_scrub_rtbitmap, NULL, xfs_sb_version_hasrealtime},
 	{xfs_scrub_setup_rt, xfs_scrub_rtsummary, NULL, xfs_sb_version_hasrealtime},
 };
