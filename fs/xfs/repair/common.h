@@ -278,4 +278,8 @@ xfs_extlen_t xfs_repair_calc_ag_resblks(struct xfs_scrub_context *sc,
 					struct xfs_inode *ip,
 					struct xfs_scrub_metadata *sm);
 
+/* Metadata repairers */
+
+int xfs_repair_superblock(struct xfs_scrub_context *sc);
+
 #endif	/* __XFS_REPAIR_COMMON_H__ */
