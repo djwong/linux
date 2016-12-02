@@ -37,6 +37,8 @@
 #include "xfs_inode_fork.h"
 #include "xfs_ialloc.h"
 #include "xfs_rmap.h"
+#include "xfs_bmap.h"
+#include "xfs_bmap_util.h"
 #include "repair/common.h"
 
 /* Inode core */
@@ -63,6 +65,7 @@ xfs_scrub_inode(
 	struct xfs_dinode		*dip;
 	xfs_ino_t			ino;
 	unsigned long long		isize;
+	unsigned long long		count;
 	uint64_t			flags2;
 	uint32_t			nextents;
 	uint32_t			extsize;
@@ -278,6 +281,40 @@ xfs_scrub_inode(
 		xfs_scrub_ag_free(&sa);
 	}
 
+	/* Walk all the extents to check nextents/naextents/nblocks. */
+	count = 0;
+	err2 = xfs_bmap_count_blocks(sc->tp, sc->ip, XFS_DATA_FORK,
+			&nextents, &count);
+	if (!xfs_scrub_should_xref(sc, err2, NULL))
+		goto skip_block_check;
+	XFS_SCRUB_INODE_CHECK(nextents == be32_to_cpu(dip->di_nextents));
+
+	err2 = xfs_bmap_count_blocks(sc->tp, sc->ip, XFS_ATTR_FORK,
+			&nextents, &count);
+	if (!xfs_scrub_should_xref(sc, err2, NULL))
+		goto skip_block_check;
+	XFS_SCRUB_INODE_CHECK(nextents == be16_to_cpu(dip->di_anextents));
+	XFS_SCRUB_INODE_CHECK(count == be64_to_cpu(dip->di_nblocks));
+
+skip_block_check:
+	/* Make sure we don't have any written extents after EOF. */
+	if (S_ISREG(mode) && !(flags & XFS_DIFLAG_PREALLOC) &&
+	    (dip->di_format == XFS_DINODE_FMT_EXTENTS ||
+	     dip->di_format == XFS_DINODE_FMT_BTREE)) {
+		struct xfs_bmbt_irec		got;
+		struct xfs_ifork		*ifp;
+		xfs_fileoff_t			lblk;
+		xfs_extnum_t			lastx;
+
+		ifp = XFS_IFORK_PTR(sc->ip, XFS_DATA_FORK);
+		lblk = XFS_B_TO_FSB(mp, i_size_read(VFS_I(sc->ip)));
+		while (xfs_iext_lookup_extent(sc->ip, ifp, lblk, &lastx,
+				&got)) {
+			XFS_SCRUB_INODE_PREEN(got.br_startoff < lblk ||
+					got.br_state != XFS_EXT_NORM);
+			lblk = got.br_startoff + got.br_blockcount;
+		}
+	}
 out:
 	if (bp)
 		xfs_trans_brelse(sc->tp, bp);
