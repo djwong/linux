@@ -70,6 +70,10 @@ xfs_scrub_allocbt_helper(
 	if (error)
 		goto out;
 
+	/* Make sure we don't cover the AG headers. */
+	XFS_SCRUB_BTREC_CHECK(bs,
+			!xfs_scrub_extent_covers_ag_head(mp, bno, len));
+
 	psa = &bs->sc->sa;
 	/*
 	 * Ensure there's a corresponding cntbt/bnobt record matching

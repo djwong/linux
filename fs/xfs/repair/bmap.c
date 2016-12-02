@@ -121,6 +121,11 @@ xfs_scrub_bmap_extent(
 		XFS_SCRUB_BMAP_OP_ERROR_GOTO(out);
 	}
 
+	/* Make sure we don't cover the AG headers. */
+	if (!info->is_rt)
+		XFS_SCRUB_BMAP_CHECK(!xfs_scrub_extent_covers_ag_head(mp,
+				bno, irec->br_blockcount));
+
 	/* Cross-reference with the bnobt. */
 	if (sa.bno_cur) {
 		err2 = xfs_alloc_has_record(sa.bno_cur, bno,

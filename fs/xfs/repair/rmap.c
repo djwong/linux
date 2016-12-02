@@ -106,6 +106,11 @@ xfs_scrub_rmapbt_helper(
 	if (error)
 		goto out;
 
+	/* Make sure only the AG header owner maps to the AG header. */
+	XFS_SCRUB_BTREC_CHECK(bs, irec.rm_owner == XFS_RMAP_OWN_FS ||
+			!xfs_scrub_extent_covers_ag_head(mp, irec.rm_startblock,
+				irec.rm_blockcount));
+
 	psa = &bs->sc->sa;
 	/* check there's no record in freesp btrees */
 	if (psa->bno_cur) {

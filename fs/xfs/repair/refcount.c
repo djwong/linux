@@ -76,6 +76,10 @@ xfs_scrub_refcountbt_helper(
 	if (error)
 		goto out;
 
+	/* Make sure we don't cover the AG headers. */
+	XFS_SCRUB_BTREC_CHECK(bs, !xfs_scrub_extent_covers_ag_head(mp,
+			irec.rc_startblock, irec.rc_blockcount));
+
 	psa = &bs->sc->sa;
 	/* Cross-reference with the bnobt. */
 	if (psa->bno_cur) {
