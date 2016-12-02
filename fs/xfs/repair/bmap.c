@@ -37,6 +37,7 @@
 #include "xfs_bmap_btree.h"
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
+#include "xfs_ialloc.h"
 #include "repair/common.h"
 #include "repair/btree.h"
 
@@ -80,6 +81,7 @@ xfs_scrub_bmap_extent(
 	xfs_agnumber_t			agno;
 	xfs_fsblock_t			bno;
 	bool				is_freesp;
+	bool				has_inodes;
 	int				error = 0;
 	int				err2 = 0;
 
@@ -132,6 +134,24 @@ xfs_scrub_bmap_extent(
 				irec->br_blockcount, &is_freesp);
 		if (xfs_scrub_should_xref(info->sc, err2, &sa.bno_cur))
 			XFS_SCRUB_BMAP_CHECK(!is_freesp);
+	}
+
+	/* Cross-reference with inobt. */
+	if (sa.ino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sa.ino_cur,
+				irec->br_startblock, irec->br_blockcount,
+				&has_inodes);
+		if (xfs_scrub_should_xref(info->sc, err2, &sa.ino_cur))
+			XFS_SCRUB_BMAP_CHECK(!has_inodes);
+	}
+
+	/* Cross-reference with finobt. */
+	if (sa.fino_cur) {
+		err2 = xfs_ialloc_has_inodes_at_extent(sa.fino_cur,
+				irec->br_startblock, irec->br_blockcount,
+				&has_inodes);
+		if (xfs_scrub_should_xref(info->sc, err2, &sa.fino_cur))
+			XFS_SCRUB_BMAP_CHECK(!has_inodes);
 	}
 
 	xfs_scrub_ag_free(&sa);
