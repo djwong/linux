@@ -1646,10 +1646,14 @@ xfs_refcount_recover_cow_leftovers(
 	if (mp->m_sb.sb_agblocks >= XFS_REFC_COW_START)
 		return -EOPNOTSUPP;
 
-	error = xfs_alloc_read_agf(mp, NULL, agno, 0, &agbp);
+	error = xfs_trans_alloc_empty(mp, &tp);
 	if (error)
 		return error;
-	cur = xfs_refcountbt_init_cursor(mp, NULL, agbp, agno, NULL);
+
+	error = xfs_alloc_read_agf(mp, tp, agno, 0, &agbp);
+	if (error)
+		goto out_trans;
+	cur = xfs_refcountbt_init_cursor(mp, tp, agbp, agno, NULL);
 
 	/* Find all the leftover CoW staging extents. */
 	INIT_LIST_HEAD(&debris);
@@ -1662,7 +1666,7 @@ xfs_refcount_recover_cow_leftovers(
 	if (error)
 		goto out_cursor;
 	xfs_btree_del_cursor(cur, XFS_BTREE_NOERROR);
-	xfs_buf_relse(agbp);
+	xfs_trans_cancel(tp);
 
 	/* Now iterate the list to free the leftovers */
 	list_for_each_entry(rr, &debris, rr_list) {
@@ -1705,13 +1709,17 @@ out_free:
 
 out_cursor:
 	xfs_btree_del_cursor(cur, XFS_BTREE_ERROR);
-	xfs_buf_relse(agbp);
+	xfs_trans_cancel(tp);
 	goto out_free;
 
 out_defer:
 	xfs_defer_cancel(&dfops);
 	xfs_trans_cancel(tp);
 	goto out_free;
+
+out_trans:
+	xfs_trans_cancel(tp);
+	return error;
 }
 
 /* Is there a record covering a given extent? */
