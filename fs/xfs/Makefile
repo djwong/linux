@@ -109,6 +109,7 @@ xfs-$(CONFIG_XFS_ONLINE_REPAIR)	+= $(addprefix repair/, \
 				   btree.o \
 				   common.o \
 				   dabtree.o \
+				   dir.o \
 				   ialloc.o \
 				   inode.o \
 				   refcount.o \

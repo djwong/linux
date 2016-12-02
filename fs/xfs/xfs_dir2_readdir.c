@@ -181,7 +181,7 @@ xfs_dir2_block_getdents(
 		return 0;
 
 	lock_mode = xfs_ilock_data_map_shared(dp);
-	error = xfs_dir3_block_read(NULL, dp, &bp);
+	error = xfs_dir3_block_read(args->trans, dp, &bp);
 	xfs_iunlock(dp, lock_mode);
 	if (error)
 		return error;
@@ -239,7 +239,7 @@ xfs_dir2_block_getdents(
 		if (!dir_emit(ctx, (char *)dep->name, dep->namelen,
 			    be64_to_cpu(dep->inumber),
 			    xfs_dir3_get_dtype(dp->i_mount, filetype))) {
-			xfs_trans_brelse(NULL, bp);
+			xfs_trans_brelse(args->trans, bp);
 			return 0;
 		}
 	}
@@ -250,7 +250,7 @@ xfs_dir2_block_getdents(
 	 */
 	ctx->pos = xfs_dir2_db_off_to_dataptr(geo, geo->datablk + 1, 0) &
 								0x7fffffff;
-	xfs_trans_brelse(NULL, bp);
+	xfs_trans_brelse(args->trans, bp);
 	return 0;
 }
 
@@ -386,7 +386,7 @@ xfs_dir2_leaf_readbuf(
 	 * Read the directory block starting at the first mapping.
 	 */
 	mip->curdb = xfs_dir2_da_to_db(geo, map->br_startoff);
-	error = xfs_dir3_data_read(NULL, dp, map->br_startoff,
+	error = xfs_dir3_data_read(args->trans, dp, map->br_startoff,
 			map->br_blockcount >= geo->fsbcount ?
 			    XFS_FSB_TO_DADDR(dp->i_mount, map->br_startblock) :
 			    -1, &bp);
@@ -535,7 +535,7 @@ xfs_dir2_leaf_getdents(
 			bool	trim_map = false;
 
 			if (bp) {
-				xfs_trans_brelse(NULL, bp);
+				xfs_trans_brelse(args->trans, bp);
 				bp = NULL;
 				trim_map = true;
 			}
@@ -649,7 +649,7 @@ xfs_dir2_leaf_getdents(
 		ctx->pos = xfs_dir2_byte_to_dataptr(curoff) & 0x7fffffff;
 	kmem_free(map_info);
 	if (bp)
-		xfs_trans_brelse(NULL, bp);
+		xfs_trans_brelse(args->trans, bp);
 	return error;
 }
 
@@ -657,7 +657,8 @@ xfs_dir2_leaf_getdents(
  * Read a directory.
  */
 int
-xfs_readdir(
+xfs_readdir_trans(
+	struct xfs_trans	*tp,
 	struct xfs_inode	*dp,
 	struct dir_context	*ctx,
 	size_t			bufsize)
@@ -676,6 +677,7 @@ xfs_readdir(
 
 	args.dp = dp;
 	args.geo = dp->i_mount->m_dir_geo;
+	args.trans = tp;
 
 	if (dp->i_d.di_format == XFS_DINODE_FMT_LOCAL)
 		rval = xfs_dir2_sf_getdents(&args, ctx);
@@ -687,4 +689,13 @@ xfs_readdir(
 		rval = xfs_dir2_leaf_getdents(&args, ctx, bufsize);
 
 	return rval;
+}
+
+int
+xfs_readdir(
+	struct xfs_inode	*dp,
+	struct dir_context	*ctx,
+	size_t			bufsize)
+{
+	return xfs_readdir_trans(NULL, dp, ctx, bufsize);
 }
