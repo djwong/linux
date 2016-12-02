@@ -481,6 +481,34 @@ xfs_dir2_free_hdr_check(
  * Stale entries are ok.
  */
 xfs_dahash_t					/* hash value */
+xfs_dir2_leaf1_lasthash(
+	struct xfs_inode *dp,
+	struct xfs_buf	*bp,			/* leaf buffer */
+	int		*count)			/* count of entries in leaf */
+{
+	struct xfs_dir2_leaf	*leaf = bp->b_addr;
+	struct xfs_dir2_leaf_entry *ents;
+	struct xfs_dir3_icleaf_hdr leafhdr;
+
+	dp->d_ops->leaf_hdr_from_disk(&leafhdr, leaf);
+
+	ASSERT(leafhdr.magic == XFS_DIR2_LEAF1_MAGIC ||
+	       leafhdr.magic == XFS_DIR3_LEAF1_MAGIC);
+
+	if (count)
+		*count = leafhdr.count;
+	if (!leafhdr.count)
+		return 0;
+
+	ents = dp->d_ops->leaf_ents_p(leaf);
+	return be32_to_cpu(ents[leafhdr.count - 1].hashval);
+}
+
+/*
+ * Return the last hash value in the leaf.
+ * Stale entries are ok.
+ */
+xfs_dahash_t					/* hash value */
 xfs_dir2_leafn_lasthash(
 	struct xfs_inode *dp,
 	struct xfs_buf	*bp,			/* leaf buffer */
