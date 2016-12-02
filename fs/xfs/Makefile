@@ -114,6 +114,7 @@ xfs-$(CONFIG_XFS_ONLINE_REPAIR)	+= $(addprefix repair/, \
 				   ialloc.o \
 				   inode.o \
 				   refcount.o \
+				   repair.o \
 				   rmap.o \
 				   rtbitmap.o \
 				   symlink.o \

@@ -643,6 +643,8 @@ xfs_scrub_teardown(
 	struct xfs_inode		*ip_in,
 	int				error)
 {
+	struct xfs_mount		*mp = sc->tp->t_mountp;
+
 	xfs_scrub_ag_free(&sc->sa);
 	if (sc->ag_lock.agmask != sc->ag_lock.__agmask)
 		kmem_free(sc->ag_lock.agmask);
@@ -664,6 +666,8 @@ xfs_scrub_teardown(
 		kmem_free(sc->buf);
 		sc->buf = NULL;
 	}
+	if (sc->reset_counters && !error)
+		error = xfs_repair_reset_counters(mp);
 	return error;
 }
 
@@ -676,11 +680,13 @@ xfs_scrub_setup(
 	bool				retry_deadlocked)
 {
 	struct xfs_mount		*mp = ip->i_mount;
+	xfs_extlen_t			resblks;
 
 	memset(sc, 0, sizeof(*sc));
 	sc->sm = sm;
+	resblks = xfs_repair_calc_ag_resblks(sc, ip, sm);
 	return xfs_scrub_trans_alloc(sm, mp, &M_RES(mp)->tr_itruncate,
-			0, 0, 0, &sc->tp);
+			resblks, 0, 0, &sc->tp);
 }
 
 /* Set us up to check an AG header. */

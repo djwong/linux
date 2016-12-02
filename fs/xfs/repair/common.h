@@ -60,6 +60,7 @@ struct xfs_scrub_context {
 	struct xfs_trans		*tp;
 	struct xfs_inode		*ip;
 	void				*buf;
+	bool				reset_counters;
 
 	/* State tracking for multi-AG operations. */
 	struct xfs_scrub_ag_lock	ag_lock;
@@ -96,6 +97,9 @@ xfs_scrub_trans_alloc(
 	uint				flags,
 	struct xfs_trans		**tpp)
 {
+	if (sm->sm_flags & XFS_SCRUB_FLAG_REPAIR)
+		return xfs_trans_alloc(mp, resp, blocks, rtextents, flags, tpp);
+
 	return xfs_trans_alloc_empty(mp, tpp);
 }
 
@@ -227,5 +231,51 @@ int xfs_scrub_xattr(struct xfs_scrub_context *sc);
 int xfs_scrub_symlink(struct xfs_scrub_context *sc);
 int xfs_scrub_rtbitmap(struct xfs_scrub_context *sc);
 int xfs_scrub_rtsummary(struct xfs_scrub_context *sc);
+
+/* Repair helpers */
+
+struct xfs_repair_find_ag_btree {
+	uint64_t			rmap_owner;
+	const struct xfs_buf_ops	*buf_ops;
+	uint32_t			magic;
+	xfs_agblock_t			root;
+	unsigned int			level;
+};
+
+struct xfs_repair_btree_extent {
+	struct list_head		list;
+	xfs_fsblock_t			fsbno;
+	xfs_extlen_t			len;
+};
+
+int xfs_repair_roll_ag_trans(struct xfs_scrub_context *sc);
+bool xfs_repair_ag_has_space(struct xfs_perag *pag, xfs_extlen_t nr_blocks,
+			     enum xfs_ag_resv_type type);
+int xfs_repair_alloc_ag_block(struct xfs_scrub_context *sc,
+			      struct xfs_owner_info *oinfo,
+			      xfs_fsblock_t *fsbno, enum xfs_ag_resv_type resv);
+int xfs_repair_init_btblock(struct xfs_scrub_context *sc, xfs_fsblock_t fsb,
+			    struct xfs_buf **bpp, __u32 magic,
+			    const struct xfs_buf_ops *ops);
+int xfs_repair_fix_freelist(struct xfs_scrub_context *sc, bool can_shrink);
+int xfs_repair_put_freelist(struct xfs_scrub_context *sc, xfs_agblock_t agbno);
+int xfs_repair_collect_btree_extent(struct xfs_mount *mp,
+				    struct list_head *btlist,
+				    xfs_fsblock_t fsbno, xfs_extlen_t len);
+int xfs_repair_reap_btree_extents(struct xfs_scrub_context *sc,
+				  struct list_head *btlist,
+				  struct xfs_owner_info *oinfo,
+				  enum xfs_ag_resv_type type);
+void xfs_repair_cancel_btree_extents(struct xfs_scrub_context *sc,
+				     struct list_head *btlist);
+int xfs_repair_subtract_extents(struct xfs_mount *mp, struct list_head *exlist,
+				struct list_head *sublist);
+int xfs_repair_find_ag_btree_roots(struct xfs_scrub_context *sc,
+				   struct xfs_buf *agf_bp,
+				   struct xfs_repair_find_ag_btree *btree_info);
+int xfs_repair_reset_counters(struct xfs_mount	*mp);
+xfs_extlen_t xfs_repair_calc_ag_resblks(struct xfs_scrub_context *sc,
+					struct xfs_inode *ip,
+					struct xfs_scrub_metadata *sm);
 
 #endif	/* __XFS_REPAIR_COMMON_H__ */
