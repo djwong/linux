@@ -697,8 +697,7 @@ xfs_getbmap(
 			goto out_free_map;
 		ASSERT(nmap <= subnex);
 
-		for (i = 0; i < nmap && nexleft && bmv->bmv_length &&
-				cur_ext < bmv->bmv_count; i++) {
+		for (i = 0; i < nmap && nexleft && bmv->bmv_length; i++) {
 			out[cur_ext].bmv_oflags = 0;
 			if (map[i].br_state == XFS_EXT_UNWRITTEN)
 				out[cur_ext].bmv_oflags |= BMV_OF_PREALLOC;
@@ -760,16 +759,15 @@ xfs_getbmap(
 				continue;
 			}
 
+			nexleft--;
 			if (inject_map.br_startblock != NULLFSBLOCK) {
 				map[i] = inject_map;
 				i--;
-			} else
-				nexleft--;
+			}
 			bmv->bmv_entries++;
 			cur_ext++;
 		}
-	} while (nmap && nexleft && bmv->bmv_length &&
-		 cur_ext < bmv->bmv_count);
+	} while (nmap && nexleft && bmv->bmv_length);
 
  out_free_map:
 	kmem_free(map);
