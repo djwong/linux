@@ -40,7 +40,6 @@ xfs_rtallocate_extent(
 	xfs_extlen_t		minlen,	/* minimum length to allocate */
 	xfs_extlen_t		maxlen,	/* maximum length to allocate */
 	xfs_extlen_t		*len,	/* out: actual length allocated */
-	xfs_alloctype_t		type,	/* allocation type XFS_ALLOCTYPE... */
 	int			wasdel,	/* was a delayed allocation extent */
 	xfs_extlen_t		prod,	/* extent product factor */
 	xfs_rtblock_t		*rtblock); /* out: start block allocated */
