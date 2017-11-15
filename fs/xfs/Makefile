@@ -19,7 +19,12 @@
 ccflags-y += -I$(src)			# needed for trace events
 ccflags-y += -I$(src)/libxfs
 
-ccflags-$(CONFIG_XFS_DEBUG) += -g
+ccflags-$(CONFIG_XFS_DEBUG) += -g -Werror
+ccflags-y += -femit-struct-debug-detailed=any -Wunused-but-set-variable \
+-Wuninitialized -Wno-pointer-sign -Wall -Wextra -Wno-unused-parameter \
+-fstack-usage
+
+UBSAN_SANITIZE := y
 
 obj-$(CONFIG_XFS_FS)		+= xfs.o
 

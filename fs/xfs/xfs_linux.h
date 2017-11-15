@@ -258,7 +258,7 @@ static inline uint64_t howmany_64(uint64_t x, uint32_t y)
 
 #ifdef DEBUG
 #define ASSERT(expr)	\
-	(likely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
+	(likely(expr) ? (void)0 : asswarn(#expr, __FILE__, __LINE__))
 
 #else	/* !DEBUG */
 
