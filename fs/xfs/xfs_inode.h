@@ -423,7 +423,17 @@ void		xfs_iunpin_wait(xfs_inode_t *);
 #define xfs_ipincount(ip)	((unsigned int) atomic_read(&ip->i_pincount))
 
 int		xfs_iflush(struct xfs_inode *, struct xfs_buf **);
-void		xfs_lock_two_inodes(xfs_inode_t *, xfs_inode_t *, uint);
+void		xfs_lock_two_inodes_separately(struct xfs_inode *ip0,
+				uint ip0_mode, struct xfs_inode *ip1,
+				uint ip1_mode);
+static inline void
+xfs_lock_two_inodes(
+	struct xfs_inode	*ip0,
+	struct xfs_inode	*ip1,
+	uint			lock_mode)
+{
+	xfs_lock_two_inodes_separately(ip0, lock_mode, ip1, lock_mode);
+}
 
 xfs_extlen_t	xfs_get_extsz_hint(struct xfs_inode *ip);
 xfs_extlen_t	xfs_get_cowextsz_hint(struct xfs_inode *ip);
