@@ -429,6 +429,7 @@ xfs_rui_recover(
 	xfs_exntst_t			state;
 	struct xfs_trans		*tp;
 	struct xfs_btree_cur		*rcur = NULL;
+	bool				rt;
 
 	ASSERT(!test_bit(XFS_RUI_RECOVERED, &ruip->rui_flags));
 
@@ -483,6 +484,7 @@ xfs_rui_recover(
 				XFS_EXT_UNWRITTEN : XFS_EXT_NORM;
 		whichfork = (rmap->me_flags & XFS_RMAP_EXTENT_ATTR_FORK) ?
 				XFS_ATTR_FORK : XFS_DATA_FORK;
+		rt = !!(rmap->me_flags & XFS_RMAP_EXTENT_REALTIME);
 		switch (rmap->me_flags & XFS_RMAP_EXTENT_TYPE_MASK) {
 		case XFS_RMAP_EXTENT_MAP:
 			type = XFS_RMAP_MAP;
@@ -515,7 +517,7 @@ xfs_rui_recover(
 		error = xfs_trans_log_finish_rmap_update(tp, rudp, type,
 				rmap->me_owner, whichfork,
 				rmap->me_startoff, rmap->me_startblock,
-				rmap->me_len, state, &rcur);
+				rmap->me_len, state, rt, &rcur);
 		if (error)
 			goto abort_error;
 

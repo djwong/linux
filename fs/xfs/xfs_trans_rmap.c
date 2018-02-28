@@ -37,13 +37,16 @@ xfs_trans_set_rmap_flags(
 	struct xfs_map_extent		*rmap,
 	enum xfs_rmap_intent_type	type,
 	int				whichfork,
-	xfs_exntst_t			state)
+	xfs_exntst_t			state,
+	bool				rt)
 {
 	rmap->me_flags = 0;
 	if (state == XFS_EXT_UNWRITTEN)
 		rmap->me_flags |= XFS_RMAP_EXTENT_UNWRITTEN;
 	if (whichfork == XFS_ATTR_FORK)
 		rmap->me_flags |= XFS_RMAP_EXTENT_ATTR_FORK;
+	if (rt)
+		rmap->me_flags |= XFS_RMAP_EXTENT_REALTIME;
 	switch (type) {
 	case XFS_RMAP_MAP:
 		rmap->me_flags |= XFS_RMAP_EXTENT_MAP;
@@ -102,6 +105,7 @@ xfs_trans_log_finish_rmap_update(
 	xfs_fsblock_t			startblock,
 	xfs_filblks_t			blockcount,
 	xfs_exntst_t			state,
+	bool				rt,
 	struct xfs_btree_cur		**pcur)
 {
 	int				error;
@@ -190,7 +194,7 @@ xfs_rmap_update_log_item(
 	map->me_startoff = rmap->ri_bmap.br_startoff;
 	map->me_len = rmap->ri_bmap.br_blockcount;
 	xfs_trans_set_rmap_flags(map, rmap->ri_type, rmap->ri_whichfork,
-			rmap->ri_bmap.br_state);
+			rmap->ri_bmap.br_state, rmap->ri_realtime);
 }
 
 /* Get an RUD so we can process all the deferred rmap updates. */
@@ -223,6 +227,7 @@ xfs_rmap_update_finish_item(
 			rmap->ri_bmap.br_startblock,
 			rmap->ri_bmap.br_blockcount,
 			rmap->ri_bmap.br_state,
+			rmap->ri_realtime,
 			(struct xfs_btree_cur **)state);
 	kmem_free(rmap);
 	return error;
