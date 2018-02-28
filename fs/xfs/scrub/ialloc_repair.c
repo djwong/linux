@@ -144,7 +144,7 @@ xfs_repair_ialloc_extent_fn(
 	blks_per_cluster = xfs_icluster_size_fsb(mp);
 	nr_inodes = XFS_OFFBNO_TO_AGINO(mp, blks_per_cluster, 0);
 
-	if (rec->rm_startblock % blks_per_cluster != 0)
+	if ((unsigned int)rec->rm_startblock % blks_per_cluster != 0)
 		return -EFSCORRUPTED;
 
 	trace_xfs_repair_ialloc_extent_fn(mp, cur->bc_private.a.agno,
