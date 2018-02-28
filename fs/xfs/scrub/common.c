@@ -49,6 +49,7 @@
 #include "scrub/common.h"
 #include "scrub/trace.h"
 #include "scrub/btree.h"
+#include "scrub/repair.h"
 
 /* Common code for the metadata scrubbers. */
 
@@ -574,7 +575,10 @@ xfs_scrub_setup_fs(
 	struct xfs_scrub_context	*sc,
 	struct xfs_inode		*ip)
 {
-	return xfs_scrub_trans_alloc(sc->sm, sc->mp, &sc->tp);
+	uint				resblks;
+
+	resblks = xfs_repair_calc_ag_resblks(sc);
+	return xfs_scrub_trans_alloc(sc->sm, sc->mp, resblks, &sc->tp);
 }
 
 /* Set us up with AG headers and btree cursors. */
@@ -705,7 +709,7 @@ xfs_scrub_setup_inode_contents(
 	/* Got the inode, lock it and we're ready to go. */
 	sc->ilock_flags = XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL;
 	xfs_ilock(sc->ip, sc->ilock_flags);
-	error = xfs_scrub_trans_alloc(sc->sm, mp, &sc->tp);
+	error = xfs_scrub_trans_alloc(sc->sm, mp, resblks, &sc->tp);
 	if (error)
 		goto out;
 	sc->ilock_flags |= XFS_ILOCK_EXCL;

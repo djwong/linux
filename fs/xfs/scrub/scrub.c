@@ -196,6 +196,8 @@ xfs_scrub_teardown(
 		kmem_free(sc->buf);
 		sc->buf = NULL;
 	}
+	if (sc->reset_counters && !error)
+		error = xfs_repair_reset_counters(sc->mp);
 	return error;
 }
 

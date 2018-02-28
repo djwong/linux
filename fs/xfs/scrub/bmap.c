@@ -74,8 +74,7 @@ xfs_scrub_setup_inode_bmap(
 			goto out;
 	}
 
-	/* Got the inode, lock it and we're ready to go. */
-	error = xfs_scrub_trans_alloc(sc->sm, mp, &sc->tp);
+	error = xfs_scrub_trans_alloc(sc->sm, mp, 0, &sc->tp);
 	if (error)
 		goto out;
 	sc->ilock_flags |= XFS_ILOCK_EXCL;

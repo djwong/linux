@@ -41,13 +41,22 @@ xfs_scrub_should_terminate(
 /*
  * Grab an empty transaction so that we can re-grab locked buffers if
  * one of our btrees turns out to be cyclic.
+ *
+ * If we're going to repair something, we need to ask for the largest
+ * possible log reservation so that we can handle the worst case
+ * scenario for rebuilding a metadata item.
  */
 static inline int
 xfs_scrub_trans_alloc(
 	struct xfs_scrub_metadata	*sm,
 	struct xfs_mount		*mp,
+	uint				blocks,
 	struct xfs_trans		**tpp)
 {
+	if (sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR)
+		return xfs_trans_alloc(mp, &M_RES(mp)->tr_itruncate,
+				blocks, 0, 0, tpp);
+
 	return xfs_trans_alloc_empty(mp, tpp);
 }
 

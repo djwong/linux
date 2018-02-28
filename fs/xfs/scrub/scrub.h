@@ -76,6 +76,7 @@ struct xfs_scrub_context {
 	void				*buf;
 	uint				ilock_flags;
 	bool				try_harder;
+	bool				reset_counters;
 
 	/* State tracking for single-AG operations. */
 	struct xfs_scrub_ag		sa;
