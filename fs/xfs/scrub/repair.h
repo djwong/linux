@@ -87,6 +87,7 @@ xfs_extlen_t xfs_repair_calc_ag_resblks(struct xfs_scrub_context *sc);
 int xfs_repair_setup_btree_extent_collection(struct xfs_scrub_context *sc);
 
 /* Metadata repairers */
+int xfs_repair_superblock(struct xfs_scrub_context *sc);
 
 #else
 
@@ -105,6 +106,8 @@ xfs_repair_calc_ag_resblks(
 	ASSERT(!(sc->sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR));
 	return 0;
 }
+
+#define xfs_repair_superblock		(NULL)
 
 #endif /* CONFIG_XFS_ONLINE_REPAIR */
 
