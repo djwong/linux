@@ -42,11 +42,16 @@
 #include "xfs_refcount_btree.h"
 #include "xfs_rmap.h"
 #include "xfs_rmap_btree.h"
+#include "xfs_errortag.h"
+#include "xfs_error.h"
+#include "xfs_log.h"
+#include "xfs_trans_priv.h"
 #include "scrub/xfs_scrub.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
 #include "scrub/trace.h"
 #include "scrub/btree.h"
+#include "scrub/repair.h"
 
 /*
  * Online Scrub and Repair
@@ -120,6 +125,24 @@
  * XCORRUPT flag; btree query function errors are noted by setting the
  * XFAIL flag and deleting the cursor to prevent further attempts to
  * cross-reference with a defective btree.
+ *
+ * If a piece of metadata proves corrupt or suboptimal, the userspace
+ * program can ask the kernel to apply some tender loving care (TLC) to
+ * the metadata object by setting the REPAIR flag and re-calling the
+ * scrub ioctl.  "Corruption" is defined by metadata violating the
+ * on-disk specification; operations cannot continue if the violation is
+ * left untreated.  It is possible for XFS to continue if an object is
+ * "suboptimal", however performance may be degraded.  Repairs are
+ * usually performed by rebuilding the metadata entirely out of
+ * redundant metadata.  Optimizing, on the other hand, can sometimes be
+ * done without rebuilding entire structures.
+ *
+ * Generally speaking, the repair code has the following code structure:
+ * Lock -> scrub -> repair -> commit -> re-lock -> re-scrub -> unlock.
+ * The first check helps us figure out if we need to rebuild or simply
+ * optimize the structure so that the rebuild knows what to do.  The
+ * second check evaluates the completeness of the repair; that is what
+ * is reported to userspace.
  */
 
 /*
@@ -155,7 +178,10 @@ xfs_scrub_teardown(
 {
 	xfs_scrub_ag_free(sc, &sc->sa);
 	if (sc->tp) {
-		xfs_trans_cancel(sc->tp);
+		if (error == 0 && (sc->sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR))
+			error = xfs_trans_commit(sc->tp);
+		else
+			xfs_trans_cancel(sc->tp);
 		sc->tp = NULL;
 	}
 	if (sc->ip) {
@@ -180,6 +206,7 @@ static const struct xfs_scrub_meta_ops meta_scrub_ops[] = {
 		.type	= ST_NONE,
 		.setup	= xfs_scrub_setup_fs,
 		.scrub	= xfs_scrub_probe,
+		.repair = xfs_repair_probe,
 	},
 	[XFS_SCRUB_TYPE_SB] = {		/* superblock */
 		.type	= ST_PERAG,
@@ -379,13 +406,96 @@ xfs_scrub_validate_inputs(
 	if (!xfs_sb_version_hasextflgbit(&mp->m_sb))
 		goto out;
 
-	/* We don't know how to repair anything yet. */
-	if (sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR)
-		goto out;
+	/*
+	 * We only want to repair read-write v5+ filesystems.  Defer the check
+	 * for ops->repair until after our scrub confirms that we need to
+	 * perform repairs so that we avoid failing due to not supporting
+	 * repairing an object that doesn't need repairs.
+	 */
+	if (sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR) {
+		error = -EOPNOTSUPP;
+		if (!xfs_sb_version_hascrc(&mp->m_sb))
+			goto out;
+
+		error = -EROFS;
+		if (mp->m_flags & XFS_MOUNT_RDONLY)
+			goto out;
+	}
 
 	error = 0;
 out:
 	return error;
+}
+
+/*
+ * Attempt to repair some metadata, if the metadata is corrupt and userspace
+ * told us to fix it.  This function returns -EAGAIN to mean "re-run scrub",
+ * and will set *fixed to true if it thinks it repaired anything.
+ */
+STATIC int
+xfs_repair_attempt(
+	struct xfs_inode		*ip,
+	struct xfs_scrub_context	*sc,
+	bool				*fixed)
+{
+	int				error = 0;
+
+	trace_xfs_repair_attempt(ip, sc->sm, error);
+
+	/* Repair needed but not supported, just exit. */
+	if (!sc->ops->repair) {
+		error = -EOPNOTSUPP;
+		trace_xfs_repair_done(ip, sc->sm, error);
+		return error;
+	}
+
+	xfs_scrub_ag_btcur_free(&sc->sa);
+
+	/* Repair whatever's broken. */
+	error = sc->ops->repair(sc);
+	trace_xfs_repair_done(ip, sc->sm, error);
+	switch (error) {
+	case 0:
+		/*
+		 * Repair succeeded.  Commit the fixes and perform a second
+		 * scrub so that we can tell userspace if we fixed the problem.
+		 */
+		sc->sm->sm_flags &= ~XFS_SCRUB_FLAGS_OUT;
+		*fixed = true;
+		return -EAGAIN;
+	case -EDEADLOCK:
+	case -EAGAIN:
+		/* Tell the caller to try again having grabbed all the locks. */
+		if (!sc->try_harder) {
+			sc->try_harder = true;
+			return -EAGAIN;
+		}
+		/*
+		 * We tried harder but still couldn't grab all the resources
+		 * we needed to fix it.  The corruption has not been fixed,
+		 * so report back to userspace.
+		 */
+		return -EFSCORRUPTED;
+	default:
+		return error;
+	}
+}
+
+/*
+ * Complain about unfixable problems in the filesystem.  We don't log
+ * corruptions when IFLAG_REPAIR wasn't set on the assumption that the driver
+ * program is xfs_scrub, which will call back with IFLAG_REPAIR set if the
+ * administrator isn't running xfs_scrub in no-repairs mode.
+ *
+ * Use this helper function because _ratelimited silently declares a static
+ * structure to track rate limiting information.
+ */
+static void
+xfs_repair_failure(
+	struct xfs_mount		*mp)
+{
+	xfs_alert_ratelimited(mp,
+"Corruption not fixed during online repair.  Unmount and run xfs_repair.");
 }
 
 /* Dispatch metadata scrubbing. */
@@ -397,6 +507,7 @@ xfs_scrub_metadata(
 	struct xfs_scrub_context	sc;
 	struct xfs_mount		*mp = ip->i_mount;
 	bool				try_harder = false;
+	bool				already_fixed = false;
 	int				error = 0;
 
 	BUILD_BUG_ON(sizeof(meta_scrub_ops) !=
@@ -446,9 +557,52 @@ retry_op:
 	} else if (error)
 		goto out_teardown;
 
-	if (sc.sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
-			       XFS_SCRUB_OFLAG_XCORRUPT))
-		xfs_alert_ratelimited(mp, "Corruption detected during scrub.");
+	if ((sc.sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR) && !already_fixed) {
+		bool needs_fix;
+
+		/* Let debug users force us into the repair routines. */
+		if (XFS_TEST_ERROR(false, mp, XFS_ERRTAG_FORCE_SCRUB_REPAIR))
+			sc.sm->sm_flags |= XFS_SCRUB_OFLAG_CORRUPT;
+
+		needs_fix = (sc.sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
+						XFS_SCRUB_OFLAG_XCORRUPT |
+						XFS_SCRUB_OFLAG_PREEN));
+		/*
+		 * If userspace asked for a repair but it wasn't necessary,
+		 * report that back to userspace.
+		 */
+		if (!needs_fix) {
+			sc.sm->sm_flags |= XFS_SCRUB_OFLAG_NO_REPAIR_NEEDED;
+			goto out_nofix;
+		}
+
+		/*
+		 * If it's broken, userspace wants us to fix it, and we haven't
+		 * already tried to fix it, then attempt a repair.
+		 */
+		error = xfs_repair_attempt(ip, &sc, &already_fixed);
+		if (error == -EAGAIN) {
+			if (sc.try_harder)
+				try_harder = true;
+			error = xfs_scrub_teardown(&sc, ip, 0);
+			if (error) {
+				xfs_repair_failure(mp);
+				goto out;
+			}
+			goto retry_op;
+		}
+	}
+
+out_nofix:
+	/*
+	 * Userspace asked us to repair something, we repaired it, rescanned
+	 * it, and the rescan says it's still broken.  Scream about this in
+	 * the system logs.
+	 */
+	if ((sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR) &&
+	    (sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
+			     XFS_SCRUB_OFLAG_XCORRUPT)))
+		xfs_repair_failure(mp);
 
 out_teardown:
 	error = xfs_scrub_teardown(&sc, ip, error);
