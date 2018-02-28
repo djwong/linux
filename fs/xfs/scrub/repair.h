@@ -99,6 +99,7 @@ int xfs_repair_allocbt(struct xfs_scrub_context *sc);
 int xfs_repair_iallocbt(struct xfs_scrub_context *sc);
 int xfs_repair_rmapbt(struct xfs_scrub_context *sc);
 int xfs_repair_refcountbt(struct xfs_scrub_context *sc);
+int xfs_repair_inode(struct xfs_scrub_context *sc);
 
 #else
 
@@ -140,6 +141,7 @@ static inline int xfs_repair_rmapbt_setup(
 #define xfs_repair_iallocbt		(NULL)
 #define xfs_repair_rmapbt		(NULL)
 #define xfs_repair_refcountbt		(NULL)
+#define xfs_repair_inode		(NULL)
 
 #endif /* CONFIG_XFS_ONLINE_REPAIR */
 
