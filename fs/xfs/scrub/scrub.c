@@ -250,11 +250,13 @@ static const struct xfs_scrub_meta_ops meta_scrub_ops[] = {
 		.type	= ST_PERAG,
 		.setup	= xfs_scrub_setup_ag_iallocbt,
 		.scrub	= xfs_scrub_inobt,
+		.repair	= xfs_repair_iallocbt,
 	},
 	[XFS_SCRUB_TYPE_FINOBT] = {	/* finobt */
 		.type	= ST_PERAG,
 		.setup	= xfs_scrub_setup_ag_iallocbt,
 		.scrub	= xfs_scrub_finobt,
+		.repair	= xfs_repair_iallocbt,
 		.has	= xfs_sb_version_hasfinobt,
 	},
 	[XFS_SCRUB_TYPE_RMAPBT] = {	/* rmapbt */
