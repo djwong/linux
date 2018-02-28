@@ -249,11 +249,21 @@ xfs_scrub_bmap_rt_extent_xref(
 	struct xfs_btree_cur		*cur,
 	struct xfs_bmbt_irec		*irec)
 {
+	int				error;
+
 	if (info->sc->sm->sm_flags & XFS_SCRUB_OFLAG_CORRUPT)
+		return;
+
+	error = xfs_scrub_rt_init(info->sc, &info->sc->sa);
+	if (!xfs_scrub_fblock_process_error(info->sc, info->whichfork,
+			irec->br_startoff, &error))
 		return;
 
 	xfs_scrub_xref_is_used_rt_space(info->sc, irec->br_startblock,
 			irec->br_blockcount);
+	xfs_scrub_bmap_xref_rmap(info, irec, irec->br_startblock);
+
+	xfs_scrub_ag_free(info->sc, &info->sc->sa);
 }
 
 /* Cross-reference a single datadev extent record. */

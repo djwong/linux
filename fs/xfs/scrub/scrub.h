@@ -142,17 +142,17 @@ void xfs_scrub_xref_is_not_inode_chunk(struct xfs_scrub_context *sc,
 void xfs_scrub_xref_is_inode_chunk(struct xfs_scrub_context *sc,
 		xfs_agblock_t agbno, xfs_extlen_t len);
 void xfs_scrub_xref_is_owned_by(struct xfs_scrub_context *sc,
-		xfs_agblock_t agbno, xfs_extlen_t len,
+		xfs_fsblock_t bno, xfs_filblks_t len,
 		struct xfs_owner_info *oinfo);
 void xfs_scrub_xref_is_not_owned_by(struct xfs_scrub_context *sc,
-		xfs_agblock_t agbno, xfs_extlen_t len,
+		xfs_fsblock_t bno, xfs_filblks_t len,
 		struct xfs_owner_info *oinfo);
 void xfs_scrub_xref_has_no_owner(struct xfs_scrub_context *sc,
-		xfs_agblock_t agbno, xfs_extlen_t len);
+		xfs_fsblock_t bno, xfs_filblks_t len);
 void xfs_scrub_xref_is_cow_staging(struct xfs_scrub_context *sc,
-		xfs_agblock_t bno, xfs_extlen_t len);
+		xfs_agblock_t agbno, xfs_extlen_t len);
 void xfs_scrub_xref_is_not_shared(struct xfs_scrub_context *sc,
-		xfs_agblock_t bno, xfs_extlen_t len);
+		xfs_agblock_t agbno, xfs_extlen_t len);
 #ifdef CONFIG_XFS_RT
 void xfs_scrub_xref_is_used_rt_space(struct xfs_scrub_context *sc,
 		xfs_rtblock_t rtbno, xfs_extlen_t len);

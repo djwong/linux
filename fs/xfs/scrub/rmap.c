@@ -203,8 +203,8 @@ xfs_scrub_rmapbt(
 static inline void
 xfs_scrub_xref_check_owner(
 	struct xfs_scrub_context	*sc,
-	xfs_agblock_t			bno,
-	xfs_extlen_t			len,
+	xfs_fsblock_t			bno,
+	xfs_filblks_t			len,
 	struct xfs_owner_info		*oinfo,
 	bool				should_have_rmap)
 {
@@ -228,8 +228,8 @@ xfs_scrub_xref_check_owner(
 void
 xfs_scrub_xref_is_owned_by(
 	struct xfs_scrub_context	*sc,
-	xfs_agblock_t			bno,
-	xfs_extlen_t			len,
+	xfs_fsblock_t			bno,
+	xfs_filblks_t			len,
 	struct xfs_owner_info		*oinfo)
 {
 	xfs_scrub_xref_check_owner(sc, bno, len, oinfo, true);
@@ -239,8 +239,8 @@ xfs_scrub_xref_is_owned_by(
 void
 xfs_scrub_xref_is_not_owned_by(
 	struct xfs_scrub_context	*sc,
-	xfs_agblock_t			bno,
-	xfs_extlen_t			len,
+	xfs_fsblock_t			bno,
+	xfs_filblks_t			len,
 	struct xfs_owner_info		*oinfo)
 {
 	xfs_scrub_xref_check_owner(sc, bno, len, oinfo, false);
@@ -250,8 +250,8 @@ xfs_scrub_xref_is_not_owned_by(
 void
 xfs_scrub_xref_has_no_owner(
 	struct xfs_scrub_context	*sc,
-	xfs_agblock_t			bno,
-	xfs_extlen_t			len)
+	xfs_fsblock_t			bno,
+	xfs_filblks_t			len)
 {
 	bool				has_rmap;
 	int				error;

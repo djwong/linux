@@ -29,12 +29,16 @@
 #include "xfs_log_format.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
+#include "xfs_inode.h"
 #include "xfs_alloc.h"
 #include "xfs_rtalloc.h"
 #include "xfs_inode.h"
+#include "xfs_rmap.h"
+#include "xfs_rtrmap_btree.h"
 #include "scrub/xfs_scrub.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
+#include "scrub/btree.h"
 #include "scrub/trace.h"
 
 /* Set us up with the realtime metadata locked. */
@@ -53,10 +57,26 @@ xfs_scrub_setup_rt(
 	sc->ip = sc->mp->m_rbmip;
 	xfs_ilock(sc->ip, sc->ilock_flags);
 
+	if (xfs_sb_version_hasrmapbt(&sc->mp->m_sb)) {
+		unsigned int	lockmode = XFS_ILOCK_EXCL;
+
+		xfs_ilock(sc->mp->m_rrmapip, lockmode);
+		xfs_trans_ijoin(sc->tp, sc->mp->m_rrmapip, lockmode);
+	}
+
 	return 0;
 }
 
 /* Realtime bitmap. */
+
+/* Cross-reference rtbitmap entries with other metadata. */
+STATIC void
+xfs_scrub_rtbitmap_xref(
+	struct xfs_scrub_context	*sc,
+	struct xfs_rtalloc_rec		*rec)
+{
+	xfs_scrub_xref_has_no_owner(sc, rec->ar_startblock, rec->ar_blockcount);
+}
 
 /* Scrub a free extent record from the realtime bitmap. */
 STATIC int
@@ -72,6 +92,9 @@ xfs_scrub_rtbitmap_rec(
 	    !xfs_verify_rtbno(sc->mp, rec->ar_startblock +
 			rec->ar_blockcount - 1))
 		xfs_scrub_fblock_set_corrupt(sc, XFS_DATA_FORK, 0);
+
+	xfs_scrub_rtbitmap_xref(sc, rec);
+
 	return 0;
 }
 
@@ -81,6 +104,10 @@ xfs_scrub_rtbitmap(
 	struct xfs_scrub_context	*sc)
 {
 	int				error;
+
+	error = xfs_scrub_rt_init(sc, &sc->sa);
+	if (error)
+		return error;
 
 	error = xfs_rtalloc_query_all(sc->tp, xfs_scrub_rtbitmap_rec, sc);
 	if (!xfs_scrub_fblock_process_error(sc, XFS_DATA_FORK, 0, &error))

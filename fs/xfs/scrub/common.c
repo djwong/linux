@@ -44,6 +44,7 @@
 #include "xfs_rmap_btree.h"
 #include "xfs_log.h"
 #include "xfs_trans_priv.h"
+#include "xfs_rtrmap_btree.h"
 #include "scrub/xfs_scrub.h"
 #include "scrub/scrub.h"
 #include "scrub/common.h"
@@ -567,6 +568,27 @@ xfs_scrub_ag_init(
 	return xfs_scrub_ag_btcur_init(sc, sa);
 }
 
+
+/*
+ * For scrubbing a realtime file, grab the rtrmapt.  We follow the same
+ * resource release rules as xfs_scrub_ag_init.
+ */
+int
+xfs_scrub_rt_init(
+	struct xfs_scrub_context	*sc,
+	struct xfs_scrub_ag		*sa)
+{
+	memset(sa, 0, sizeof(*sa));
+	sa->agno = NULLAGNUMBER;
+	if (xfs_sb_version_hasrmapbt(&sc->mp->m_sb)) {
+		xfs_ilock(sc->mp->m_rrmapip, XFS_ILOCK_SHARED);
+		sa->rmap_cur = xfs_rtrmapbt_init_cursor(sc->mp, sc->tp,
+				sc->mp->m_rrmapip);
+		xfs_trans_ijoin(sc->tp, sc->mp->m_rrmapip, XFS_ILOCK_SHARED);
+	}
+
+	return 0;
+}
 /* Per-scrubber setup functions */
 
 /* Set us up with a transaction and an empty context. */
