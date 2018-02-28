@@ -1119,7 +1119,7 @@ xfs_fs_statfs(
 	spin_lock(&mp->m_sb_lock);
 	statp->f_bsize = sbp->sb_blocksize;
 	lsize = sbp->sb_logstart ? sbp->sb_logblocks : 0;
-	statp->f_blocks = sbp->sb_dblocks - lsize;
+	statp->f_blocks = sbp->sb_dblocks - lsize - mp->m_ag_resv;
 	spin_unlock(&mp->m_sb_lock);
 
 	statp->f_bfree = fdblocks - mp->m_alloc_set_aside;

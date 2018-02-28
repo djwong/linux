@@ -150,6 +150,7 @@ __xfs_ag_resv_free(
 	struct xfs_perag		*pag,
 	enum xfs_ag_resv_type		type)
 {
+	struct xfs_mount		*mp = pag->pag_mount;
 	struct xfs_ag_resv		*resv;
 	xfs_extlen_t			oldresv;
 	int				error;
@@ -167,6 +168,7 @@ __xfs_ag_resv_free(
 		oldresv = resv->ar_orig_reserved;
 	else
 		oldresv = resv->ar_reserved;
+	mp->m_ag_resv -= oldresv;
 	error = xfs_mod_fdblocks(pag->pag_mount, oldresv, true);
 	resv->ar_reserved = 0;
 	resv->ar_asked = 0;
@@ -217,6 +219,7 @@ __xfs_ag_resv_init(
 				pag->pag_agno);
 		return error;
 	}
+	mp->m_ag_resv += reserved;
 
 	/*
 	 * Reduce the maximum per-AG allocation length by however much we're
