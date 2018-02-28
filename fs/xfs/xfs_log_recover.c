@@ -3115,7 +3115,18 @@ xlog_recover_inode_pass2(
 	/* Take the opportunity to reset the flush iteration count */
 	ldip->di_flushiter = 0;
 
-	if (unlikely(S_ISREG(ldip->di_mode))) {
+	if (in_f->ilf_ino == mp->m_sb.sb_rrmapino) {
+		if (ldip->di_format != XFS_DINODE_FMT_RMAP) {
+			XFS_CORRUPTION_ERROR("xlog_recover_inode_pass2(3)",
+					 XFS_ERRLEVEL_LOW, mp, ldip);
+			xfs_alert(mp,
+		"%s: Bad rtrmapbt inode log record, rec ptr 0x%p, "
+		"ino ptr = 0x%p, ino bp = 0x%p, ino %Ld",
+				__func__, item, dip, bp, in_f->ilf_ino);
+			error = -EFSCORRUPTED;
+			goto out_release;
+		}
+	} else if (unlikely(S_ISREG(ldip->di_mode))) {
 		if ((ldip->di_format != XFS_DINODE_FMT_EXTENTS) &&
 		    (ldip->di_format != XFS_DINODE_FMT_BTREE)) {
 			XFS_CORRUPTION_ERROR("xlog_recover_inode_pass2(3)",

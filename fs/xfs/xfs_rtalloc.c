@@ -1227,6 +1227,25 @@ xfs_rtmount_inodes(
 		return error;
 	}
 	ASSERT(mp->m_rsumip != NULL);
+
+	/* If we have rmap and a realtime device, look for the rtrmapbt. */
+	if (xfs_sb_version_hasrmapbt(&mp->m_sb) && mp->m_sb.sb_rblocks > 0) {
+		ASSERT(sbp->sb_rrmapino != NULLFSINO);
+		error = xfs_iget(mp, NULL, sbp->sb_rrmapino, 0, 0,
+				&mp->m_rrmapip);
+		if (error) {
+			if (mp->m_rrmapip)
+				IRELE(mp->m_rrmapip);
+			return error;
+		}
+		ASSERT(mp->m_rrmapip != NULL);
+		if (mp->m_rrmapip->i_d.di_format != XFS_DINODE_FMT_RMAP) {
+			IRELE(mp->m_rrmapip);
+			mp->m_rrmapip = NULL;
+			return -EFSCORRUPTED;
+		}
+	}
+
 	return 0;
 }
 
@@ -1234,6 +1253,8 @@ void
 xfs_rtunmount_inodes(
 	struct xfs_mount	*mp)
 {
+	if (mp->m_rrmapip)
+		IRELE(mp->m_rrmapip);
 	if (mp->m_rbmip)
 		IRELE(mp->m_rbmip);
 	if (mp->m_rsumip)
