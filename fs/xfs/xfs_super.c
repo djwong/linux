@@ -1709,13 +1709,6 @@ xfs_fs_fill_super(
 		goto out_filestream_unmount;
 	}
 
-	if (xfs_sb_version_hasrmapbt(&mp->m_sb) && mp->m_sb.sb_rblocks) {
-		xfs_alert(mp,
-	"reverse mapping btree not compatible with realtime device!");
-		error = -EINVAL;
-		goto out_filestream_unmount;
-	}
-
 	error = xfs_mountfs(mp);
 	if (error)
 		goto out_filestream_unmount;
