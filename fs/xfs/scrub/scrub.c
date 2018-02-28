@@ -352,6 +352,11 @@ static const struct xfs_scrub_meta_ops meta_scrub_ops[] = {
 		.setup	= xfs_scrub_setup_quota,
 		.scrub	= xfs_scrub_quota,
 	},
+	[XFS_SCRUB_TYPE_RTRMAPBT] = {	/* realtime rmapbt */
+		.setup	= xfs_scrub_setup_rtrmapbt,
+		.scrub	= xfs_scrub_rtrmapbt,
+		.has	= xfs_sb_version_hasrtrmapbt,
+	},
 };
 
 /* This isn't a stable feature, warn once per day. */
