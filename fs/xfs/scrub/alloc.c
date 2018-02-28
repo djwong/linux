@@ -29,7 +29,6 @@
 #include "xfs_log_format.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
-#include "xfs_alloc.h"
 #include "xfs_rmap.h"
 #include "xfs_alloc.h"
 #include "scrub/xfs_scrub.h"
