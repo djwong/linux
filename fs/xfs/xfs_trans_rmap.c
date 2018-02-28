@@ -97,6 +97,7 @@ xfs_trans_get_rud(
 int
 xfs_trans_log_finish_rmap_update(
 	struct xfs_trans		*tp,
+	struct xfs_defer_ops		*dfops,
 	struct xfs_rud_log_item		*rudp,
 	enum xfs_rmap_intent_type	type,
 	uint64_t			owner,
@@ -110,8 +111,8 @@ xfs_trans_log_finish_rmap_update(
 {
 	int				error;
 
-	error = xfs_rmap_finish_one(tp, type, owner, whichfork, startoff,
-			startblock, blockcount, state, pcur);
+	error = xfs_rmap_finish_one(tp, dfops, type, owner, whichfork, startoff,
+			startblock, blockcount, state, rt, pcur);
 
 	/*
 	 * Mark the transaction dirty, even on error. This ensures the
@@ -220,7 +221,7 @@ xfs_rmap_update_finish_item(
 	int				error;
 
 	rmap = container_of(item, struct xfs_rmap_intent, ri_list);
-	error = xfs_trans_log_finish_rmap_update(tp, done_item,
+	error = xfs_trans_log_finish_rmap_update(tp, dop, done_item,
 			rmap->ri_type,
 			rmap->ri_owner, rmap->ri_whichfork,
 			rmap->ri_bmap.br_startoff,

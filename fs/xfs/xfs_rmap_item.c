@@ -430,6 +430,8 @@ xfs_rui_recover(
 	struct xfs_trans		*tp;
 	struct xfs_btree_cur		*rcur = NULL;
 	bool				rt;
+	struct xfs_defer_ops		dfops;
+	xfs_fsblock_t			firstfsb;
 
 	ASSERT(!test_bit(XFS_RUI_RECOVERED, &ruip->rui_flags));
 
@@ -478,6 +480,7 @@ xfs_rui_recover(
 		return error;
 	rudp = xfs_trans_get_rud(tp, ruip);
 
+	xfs_defer_init(&dfops, &firstfsb);
 	for (i = 0; i < ruip->rui_format.rui_nextents; i++) {
 		rmap = &ruip->rui_format.rui_extents[i];
 		state = (rmap->me_flags & XFS_RMAP_EXTENT_UNWRITTEN) ?
@@ -514,7 +517,7 @@ xfs_rui_recover(
 			error = -EFSCORRUPTED;
 			goto abort_error;
 		}
-		error = xfs_trans_log_finish_rmap_update(tp, rudp, type,
+		error = xfs_trans_log_finish_rmap_update(tp, &dfops, rudp, type,
 				rmap->me_owner, whichfork,
 				rmap->me_startoff, rmap->me_startblock,
 				rmap->me_len, state, rt, &rcur);
@@ -524,6 +527,9 @@ xfs_rui_recover(
 	}
 
 	xfs_rmap_finish_one_cleanup(tp, rcur, error);
+	error = xfs_defer_finish(&tp, &dfops);
+	if (error)
+		goto abort_error;
 	set_bit(XFS_RUI_RECOVERED, &ruip->rui_flags);
 	error = xfs_trans_commit(tp);
 	return error;
