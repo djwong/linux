@@ -72,6 +72,14 @@ xfs_scrub_setup_inode_bmap(
 		error = filemap_write_and_wait(VFS_I(sc->ip)->i_mapping);
 		if (error)
 			goto out;
+
+		/* Drop the page cache if we're repairing block mappings. */
+		if (sc->sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR) {
+			error = invalidate_inode_pages2(
+					VFS_I(sc->ip)->i_mapping);
+			if (error)
+				goto out;
+		}
 	}
 
 	error = xfs_scrub_trans_alloc(sc->sm, mp, 0, &sc->tp);
