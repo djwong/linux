@@ -38,6 +38,22 @@
 
 /* btree scrubbing */
 
+/* Figure out which block the btree cursor was pointing to. */
+static inline xfs_fsblock_t
+xfs_scrub_btree_cur_fsbno(
+	struct xfs_btree_cur		*cur,
+	int				level)
+{
+	if (level < cur->bc_nlevels && cur->bc_bufs[level])
+		return XFS_DADDR_TO_FSB(cur->bc_mp, cur->bc_bufs[level]->b_bn);
+	else if (level == cur->bc_nlevels - 1 &&
+		 cur->bc_flags & XFS_BTREE_ROOT_IN_INODE)
+		return XFS_INO_TO_FSB(cur->bc_mp, cur->bc_private.b.ip->i_ino);
+	else if (!(cur->bc_flags & XFS_BTREE_LONG_PTRS))
+		return XFS_AGB_TO_FSB(cur->bc_mp, cur->bc_private.a.agno, 0);
+	return NULLFSBLOCK;
+}
+
 /*
  * Check for btree operation errors.  See the section about handling
  * operational errors in common.c.
@@ -67,11 +83,37 @@ __xfs_scrub_btree_process_error(
 		/* fall through */
 	default:
 		if (cur->bc_flags & XFS_BTREE_ROOT_IN_INODE)
+		{
+			xfs_fsblock_t fsbno = xfs_scrub_btree_cur_fsbno(cur, level);
+			xfs_scrub_whine(sc->mp, "ino %llu fork %d type %d btnum %d level %d ptr %d agno %u agbno %u error %d ret_ip %pS",
+					cur->bc_private.b.ip->i_ino,
+					cur->bc_private.b.whichfork,
+					sc->sm->sm_type,
+					cur->bc_btnum,
+					level,
+					cur->bc_ptrs[level],
+					XFS_FSB_TO_AGNO(cur->bc_mp, fsbno),
+					XFS_FSB_TO_AGBNO(cur->bc_mp, fsbno),
+					*error,
+					ret_ip);
 			trace_xfs_scrub_ifork_btree_op_error(sc, cur, level,
 					*error, ret_ip);
+		}
 		else
+		{
+			xfs_fsblock_t fsbno = xfs_scrub_btree_cur_fsbno(cur, level);
+			xfs_scrub_whine(sc->mp, "type %d btnum %d level %d ptr %d agno %u agbno %u error %d ret_ip %pS",
+					sc->sm->sm_type,
+					cur->bc_btnum,
+					level,
+					cur->bc_ptrs[level],
+					XFS_FSB_TO_AGNO(cur->bc_mp, fsbno),
+					XFS_FSB_TO_AGBNO(cur->bc_mp, fsbno),
+					*error,
+					ret_ip);
 			trace_xfs_scrub_btree_op_error(sc, cur, level,
 					*error, ret_ip);
+		}
 		break;
 	}
 	return false;
@@ -111,11 +153,35 @@ __xfs_scrub_btree_set_corrupt(
 	sc->sm->sm_flags |= errflag;
 
 	if (cur->bc_flags & XFS_BTREE_ROOT_IN_INODE)
+	{
+		xfs_fsblock_t fsbno = xfs_scrub_btree_cur_fsbno(cur, level);
+		xfs_scrub_whine(sc->mp, "ino %llu fork %d type %d btnum %d level %d ptr %d agno %u agbno %u ret_ip %pS",
+				cur->bc_private.b.ip->i_ino,
+				cur->bc_private.b.whichfork,
+				sc->sm->sm_type,
+				cur->bc_btnum,
+				level,
+				cur->bc_ptrs[level],
+				XFS_FSB_TO_AGNO(cur->bc_mp, fsbno),
+				XFS_FSB_TO_AGBNO(cur->bc_mp, fsbno),
+				ret_ip);
 		trace_xfs_scrub_ifork_btree_error(sc, cur, level,
 				ret_ip);
+	}
 	else
+	{
+		xfs_fsblock_t fsbno = xfs_scrub_btree_cur_fsbno(cur, level);
+		xfs_scrub_whine(sc->mp, "type %d btnum %d level %d ptr %d agno %u agbno %u ret_ip %pS",
+				sc->sm->sm_type,
+				cur->bc_btnum,
+				level,
+				cur->bc_ptrs[level],
+				XFS_FSB_TO_AGNO(cur->bc_mp, fsbno),
+				XFS_FSB_TO_AGBNO(cur->bc_mp, fsbno),
+				ret_ip);
 		trace_xfs_scrub_btree_error(sc, cur, level,
 				ret_ip);
+	}
 }
 
 void

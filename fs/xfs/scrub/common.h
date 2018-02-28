@@ -169,5 +169,6 @@ int xfs_scrub_get_inode(struct xfs_scrub_context *sc, struct xfs_inode *ip_in);
 int xfs_scrub_setup_inode_contents(struct xfs_scrub_context *sc,
 				   struct xfs_inode *ip, unsigned int resblks);
 void xfs_scrub_buffer_recheck(struct xfs_scrub_context *sc, struct xfs_buf *bp);
+void xfs_scrub_whine(const struct xfs_mount *mp, const char *fmt, ...);
 
 #endif	/* __XFS_SCRUB_COMMON_H__ */

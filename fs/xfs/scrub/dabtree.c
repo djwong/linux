@@ -71,6 +71,14 @@ xfs_scrub_da_process_error(
 		*error = 0;
 		/* fall through */
 	default:
+		xfs_scrub_whine(sc->mp, "ino %llu fork %d type %d offset %llu error %d ret_ip %pS",
+				sc->ip->i_ino,
+				ds->dargs.whichfork,
+				sc->sm->sm_type,
+				xfs_dir2_da_to_db(ds->dargs.geo,
+					ds->state->path.blk[level].blkno),
+				*error,
+				__return_address);
 		trace_xfs_scrub_file_op_error(sc, ds->dargs.whichfork,
 				xfs_dir2_da_to_db(ds->dargs.geo,
 					ds->state->path.blk[level].blkno),
@@ -93,6 +101,13 @@ xfs_scrub_da_set_corrupt(
 
 	sc->sm->sm_flags |= XFS_SCRUB_OFLAG_CORRUPT;
 
+	xfs_scrub_whine(sc->mp, "ino %llu fork %d type %d offset %llu ret_ip %pS",
+			sc->ip->i_ino,
+			ds->dargs.whichfork,
+			sc->sm->sm_type,
+			xfs_dir2_da_to_db(ds->dargs.geo,
+				ds->state->path.blk[level].blkno),
+			__return_address);
 	trace_xfs_scrub_fblock_error(sc, ds->dargs.whichfork,
 			xfs_dir2_da_to_db(ds->dargs.geo,
 				ds->state->path.blk[level].blkno),
