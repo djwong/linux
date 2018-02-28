@@ -1436,6 +1436,30 @@ xfs_fs_unfreeze(
 	return 0;
 }
 
+/* Don't let userspace freeze while we're scrubbing the filesystem. */
+STATIC int
+xfs_fs_freeze_super(
+	struct super_block	*sb)
+{
+	struct xfs_mount	*mp = XFS_M(sb);
+
+	if (atomic_read(&mp->m_scrubbers) > 0)
+		return -EBUSY;
+	return freeze_super(sb);
+}
+
+/* Don't let userspace thaw while we're scrubbing the filesystem. */
+STATIC int
+xfs_fs_thaw_super(
+	struct super_block	*sb)
+{
+	struct xfs_mount	*mp = XFS_M(sb);
+
+	if (atomic_read(&mp->m_scrubbers) > 0)
+		return -EBUSY;
+	return thaw_super(sb);
+}
+
 STATIC int
 xfs_fs_show_options(
 	struct seq_file		*m,
@@ -1574,6 +1598,7 @@ xfs_fs_fill_super(
 	spin_lock_init(&mp->m_sb_lock);
 	mutex_init(&mp->m_growlock);
 	atomic_set(&mp->m_active_trans, 0);
+	atomic_set(&mp->m_scrubbers, 0);
 	INIT_DELAYED_WORK(&mp->m_reclaim_work, xfs_reclaim_worker);
 	INIT_DELAYED_WORK(&mp->m_eofblocks_work, xfs_eofblocks_worker);
 	INIT_DELAYED_WORK(&mp->m_cowblocks_work, xfs_cowblocks_worker);
@@ -1790,6 +1815,8 @@ static const struct super_operations xfs_super_operations = {
 	.show_options		= xfs_fs_show_options,
 	.nr_cached_objects	= xfs_fs_nr_cached_objects,
 	.free_cached_objects	= xfs_fs_free_cached_objects,
+	.freeze_super		= xfs_fs_freeze_super,
+	.thaw_super		= xfs_fs_thaw_super,
 };
 
 static struct file_system_type xfs_fs_type = {

@@ -879,3 +879,77 @@ xfs_repair_calc_ag_resblks(
 
 	return max(max(bnobt_sz, inobt_sz), max(rmapbt_sz, refcbt_sz));
 }
+
+/* Freeze the FS against outside activity. */
+int
+xfs_repair_fs_freeze(
+	struct xfs_scrub_context	*sc)
+{
+	struct xfs_mount		*mp = sc->mp;
+	struct super_block		*sb = mp->m_super;
+	int				error;
+
+	xfs_icache_disable_reclaim(mp);
+
+	/* Freeze out any further writes or page faults. */
+	error = freeze_super(sb);
+	if (error)
+		return error;
+
+	/* Thaw it to the point that we can make transactions. */
+	down_write(&sb->s_umount);
+	sb->s_writers.frozen = SB_FREEZE_FS;
+	percpu_rwsem_acquire(sb->s_writers.rw_sem + SB_FREEZE_FS - 1,
+			0, _THIS_IP_);
+	percpu_up_write(sb->s_writers.rw_sem + SB_FREEZE_FS - 1);
+	up_write(&sb->s_umount);
+	sc->fs_frozen = true;
+
+	return 0;
+}
+
+/* Unfreeze the FS. */
+int
+xfs_repair_fs_thaw(
+	struct xfs_scrub_context	*sc)
+{
+	struct xfs_mount		*mp = sc->mp;
+	struct super_block		*sb = mp->m_super;
+	int				error;
+
+	WARN_ON(sb->s_writers.frozen != SB_FREEZE_FS);
+
+	/* Re-freeze the last level of filesystem. */
+	down_write(&sb->s_umount);
+	percpu_down_write(sb->s_writers.rw_sem + SB_FREEZE_FS - 1);
+	percpu_rwsem_release(sb->s_writers.rw_sem + SB_FREEZE_FS - 1,
+			0, _THIS_IP_);
+	sb->s_writers.frozen = SB_FREEZE_COMPLETE;
+	up_write(&sb->s_umount);
+
+	/* Thaw everything. */
+	error = thaw_super(sb);
+	xfs_icache_enable_reclaim(mp);
+	return error;
+}
+
+/* Read all AG headers and attach to this transaction. */
+int
+xfs_repair_grab_all_ag_headers(
+	struct xfs_scrub_context	*sc)
+{
+	struct xfs_mount		*mp = sc->mp;
+	struct xfs_buf			*agi;
+	struct xfs_buf			*agf;
+	struct xfs_buf			*agfl;
+	xfs_agnumber_t			agno;
+	int				error = 0;
+
+	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
+		error = xfs_scrub_ag_read_headers(sc, agno, &agi, &agf, &agfl);
+		if (error)
+			break;
+	}
+
+	return error;
+}

@@ -171,6 +171,7 @@ xfs-y				+= $(addprefix scrub/, \
 				   alloc_repair.o \
 				   ialloc_repair.o \
 				   repair.o \
+				   rmap_repair.o \
 				   )
 endif
 endif

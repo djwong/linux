@@ -85,6 +85,10 @@ int xfs_repair_find_ag_btree_roots(struct xfs_scrub_context *sc,
 int xfs_repair_reset_counters(struct xfs_mount *mp);
 xfs_extlen_t xfs_repair_calc_ag_resblks(struct xfs_scrub_context *sc);
 int xfs_repair_setup_btree_extent_collection(struct xfs_scrub_context *sc);
+int xfs_repair_fs_freeze(struct xfs_scrub_context *sc);
+int xfs_repair_fs_thaw(struct xfs_scrub_context *sc);
+int xfs_repair_grab_all_ag_headers(struct xfs_scrub_context *sc);
+int xfs_repair_rmapbt_setup(struct xfs_scrub_context *sc, struct xfs_inode *ip);
 
 /* Metadata repairers */
 int xfs_repair_superblock(struct xfs_scrub_context *sc);
@@ -93,6 +97,7 @@ int xfs_repair_agfl(struct xfs_scrub_context *sc);
 int xfs_repair_agi(struct xfs_scrub_context *sc);
 int xfs_repair_allocbt(struct xfs_scrub_context *sc);
 int xfs_repair_iallocbt(struct xfs_scrub_context *sc);
+int xfs_repair_rmapbt(struct xfs_scrub_context *sc);
 
 #else
 
@@ -112,12 +117,27 @@ xfs_repair_calc_ag_resblks(
 	return 0;
 }
 
+static inline int xfs_repair_fs_thaw(struct xfs_scrub_context *sc)
+{
+	ASSERT(0);
+	return -EIO;
+}
+
+static inline int xfs_repair_rmapbt_setup(
+	struct xfs_scrub_context	*sc,
+	struct xfs_inode		*ip)
+{
+	/* We don't support rmap repair, but we can still do a scan. */
+	return xfs_scrub_setup_ag_btree(sc, ip, false);
+}
+
 #define xfs_repair_superblock		(NULL)
 #define xfs_repair_agf			(NULL)
 #define xfs_repair_agfl			(NULL)
 #define xfs_repair_agi			(NULL)
 #define xfs_repair_allocbt		(NULL)
 #define xfs_repair_iallocbt		(NULL)
+#define xfs_repair_rmapbt		(NULL)
 
 #endif /* CONFIG_XFS_ONLINE_REPAIR */
 

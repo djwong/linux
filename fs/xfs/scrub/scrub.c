@@ -176,6 +176,8 @@ xfs_scrub_teardown(
 	struct xfs_inode		*ip_in,
 	int				error)
 {
+	int				err2;
+
 	xfs_scrub_ag_free(sc, &sc->sa);
 	if (sc->tp) {
 		if (error == 0 && (sc->sm->sm_flags & XFS_SCRUB_IFLAG_REPAIR))
@@ -183,6 +185,12 @@ xfs_scrub_teardown(
 		else
 			xfs_trans_cancel(sc->tp);
 		sc->tp = NULL;
+	}
+	if (sc->fs_frozen) {
+		err2 = xfs_repair_fs_thaw(sc);
+		if (!error && err2)
+			error = err2;
+		sc->fs_frozen = false;
 	}
 	if (sc->ip) {
 		if (sc->ilock_flags)
@@ -263,6 +271,7 @@ static const struct xfs_scrub_meta_ops meta_scrub_ops[] = {
 		.type	= ST_PERAG,
 		.setup	= xfs_scrub_setup_ag_rmapbt,
 		.scrub	= xfs_scrub_rmapbt,
+		.repair	= xfs_repair_rmapbt,
 		.has	= xfs_sb_version_hasrmapbt,
 	},
 	[XFS_SCRUB_TYPE_REFCNTBT] = {	/* refcountbt */
@@ -539,6 +548,8 @@ xfs_scrub_metadata(
 
 	xfs_scrub_experimental_warning(mp);
 
+	atomic_inc(&mp->m_scrubbers);
+
 retry_op:
 	/* Set up for the operation. */
 	memset(&sc, 0, sizeof(sc));
@@ -561,7 +572,7 @@ retry_op:
 		 */
 		error = xfs_scrub_teardown(&sc, ip, 0);
 		if (error)
-			goto out;
+			goto out_dec;
 		try_harder = true;
 		goto retry_op;
 	} else if (error)
@@ -597,7 +608,7 @@ retry_op:
 			error = xfs_scrub_teardown(&sc, ip, 0);
 			if (error) {
 				xfs_repair_failure(mp);
-				goto out;
+				goto out_dec;
 			}
 			goto retry_op;
 		}
@@ -616,6 +627,8 @@ out_nofix:
 
 out_teardown:
 	error = xfs_scrub_teardown(&sc, ip, error);
+out_dec:
+	atomic_dec(&mp->m_scrubbers);
 out:
 	trace_xfs_scrub_done(ip, sm, error);
 	if (error == -EFSCORRUPTED || error == -EFSBADCRC) {

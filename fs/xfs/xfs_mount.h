@@ -206,6 +206,7 @@ typedef struct xfs_mount {
 	unsigned int		*m_errortag;
 	struct xfs_kobj		m_errortag_kobj;
 #endif
+	atomic_t		m_scrubbers;	/* # of active scrub processes */
 } xfs_mount_t;
 
 /*
