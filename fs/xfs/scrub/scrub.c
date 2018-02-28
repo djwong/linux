@@ -278,6 +278,7 @@ static const struct xfs_scrub_meta_ops meta_scrub_ops[] = {
 		.type	= ST_PERAG,
 		.setup	= xfs_scrub_setup_ag_refcountbt,
 		.scrub	= xfs_scrub_refcountbt,
+		.repair	= xfs_repair_refcountbt,
 		.has	= xfs_sb_version_hasreflink,
 	},
 	[XFS_SCRUB_TYPE_INODE] = {	/* inode record */
