@@ -496,7 +496,9 @@ xfs_scrub_xref_inode_check(
 	bool				has_inodes;
 	int				error;
 
-	if (!(*icur))
+	if (!(*icur) ||
+	    (sc->sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
+				 XFS_SCRUB_OFLAG_XCORRUPT)))
 		return;
 
 	error = xfs_ialloc_has_inodes_at_extent(*icur, agbno, len, &has_inodes);

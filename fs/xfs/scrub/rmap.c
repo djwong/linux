@@ -207,7 +207,9 @@ xfs_scrub_xref_check_owner(
 	bool				has_rmap;
 	int				error;
 
-	if (!sc->sa.rmap_cur)
+	if (!sc->sa.rmap_cur ||
+	    (sc->sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
+				 XFS_SCRUB_OFLAG_XCORRUPT)))
 		return;
 
 	error = xfs_rmap_record_exists(sc->sa.rmap_cur, bno, len, oinfo,
@@ -250,7 +252,9 @@ xfs_scrub_xref_has_no_owner(
 	bool				has_rmap;
 	int				error;
 
-	if (!sc->sa.rmap_cur)
+	if (!sc->sa.rmap_cur ||
+	    (sc->sm->sm_flags & (XFS_SCRUB_OFLAG_CORRUPT |
+				 XFS_SCRUB_OFLAG_XCORRUPT)))
 		return;
 
 	error = xfs_rmap_has_record(sc->sa.rmap_cur, bno, len, &has_rmap);
