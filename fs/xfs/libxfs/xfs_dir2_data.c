@@ -33,6 +33,11 @@
 #include "xfs_cksum.h"
 #include "xfs_log.h"
 
+static xfs_failaddr_t xfs_dir2_data_freefind_verify(
+		struct xfs_dir2_data_hdr *hdr, struct xfs_dir2_data_free *bf,
+		struct xfs_dir2_data_unused *dup,
+		struct xfs_dir2_data_free **bf_ent);
+
 /*
  * Check the consistency of the data block.
  * The input can also be a block-format directory.
@@ -52,6 +57,7 @@ __xfs_dir3_data_check(
 	xfs_dir2_data_free_t	*dfp;		/* bestfree entry */
 	xfs_dir2_data_unused_t	*dup;		/* unused entry */
 	char			*endp;		/* end of useful data */
+	xfs_failaddr_t		fa;
 	int			freeseen;	/* mask of bestfrees seen */
 	xfs_dahash_t		hash;		/* hash of current name */
 	int			i;		/* leaf index */
@@ -154,7 +160,9 @@ __xfs_dir3_data_check(
 			if (be16_to_cpu(*xfs_dir2_data_unused_tag_p(dup)) !=
 			    (char *)dup - (char *)hdr)
 				return __this_address;
-			dfp = xfs_dir2_data_freefind(hdr, bf, dup);
+			fa = xfs_dir2_data_freefind_verify(hdr, bf, dup, &dfp);
+			if (fa)
+				return fa;
 			if (dfp) {
 				i = (int)(dfp - bf);
 				if ((freeseen & (1 << i)) != 0)
@@ -381,6 +389,84 @@ xfs_dir3_data_readahead(
 }
 
 /*
+ * Find the bestfree entry that exactly coincides with unused directory space
+ * or a verifier error because the bestfree data are bad.
+ */
+static xfs_failaddr_t
+xfs_dir2_data_freefind_verify(
+	struct xfs_dir2_data_hdr	*hdr,
+	struct xfs_dir2_data_free	*bf,
+	struct xfs_dir2_data_unused	*dup,
+	struct xfs_dir2_data_free	**bf_ent)
+{
+	struct xfs_dir2_data_free	*dfp;
+	xfs_dir2_data_aoff_t		off;
+	bool				matched = false;
+	bool				seenzero = false;
+
+	*bf_ent = NULL;
+	off = (xfs_dir2_data_aoff_t)((char *)dup - (char *)hdr);
+
+	/*
+	 * Validate some consistency in the bestfree table.
+	 * Check order, non-overlapping entries, and if we find the
+	 * one we're looking for it has to be exact.
+	 */
+	for (dfp = &bf[0]; dfp < &bf[XFS_DIR2_DATA_FD_COUNT]; dfp++) {
+		if (!dfp->offset) {
+			if (dfp->length)
+				return __this_address;
+			seenzero = true;
+			continue;
+		}
+		if (seenzero)
+			return __this_address;
+		if (be16_to_cpu(dfp->offset) == off) {
+			matched = true;
+			if (dfp->length != dup->length)
+				return __this_address;
+		} else if (be16_to_cpu(dfp->offset) > off) {
+			if (off + be16_to_cpu(dup->length) >
+			    be16_to_cpu(dfp->offset))
+				return __this_address;
+		} else {
+			if (be16_to_cpu(dfp->offset) +
+			    be16_to_cpu(dfp->length) > off)
+				return __this_address;
+		}
+		if (!matched &&
+		    be16_to_cpu(dfp->length) < be16_to_cpu(dup->length))
+			return __this_address;
+		if (dfp > &bf[0] &&
+		    be16_to_cpu(dfp[-1].length) < be16_to_cpu(dfp[0].length))
+			return __this_address;
+	}
+
+	/*
+	 * If this is smaller than the smallest bestfree entry,
+	 * it can't be there since they're sorted.
+	 */
+	if (be16_to_cpu(dup->length) <
+	    be16_to_cpu(bf[XFS_DIR2_DATA_FD_COUNT - 1].length))
+		return NULL;
+	/*
+	 * Look at the three bestfree entries for our guy.
+	 */
+	for (dfp = &bf[0]; dfp < &bf[XFS_DIR2_DATA_FD_COUNT]; dfp++) {
+		if (!dfp->offset)
+			return NULL;
+		if (be16_to_cpu(dfp->offset) == off) {
+			*bf_ent = dfp;
+			return NULL;
+		}
+	}
+	/*
+	 * Didn't find it.  This only happens if there are duplicate lengths.
+	 */
+	return NULL;
+}
+
+/*
  * Given a data block and an unused entry from that block,
  * return the bestfree entry if any that corresponds to it.
  */
@@ -392,44 +478,9 @@ xfs_dir2_data_freefind(
 {
 	xfs_dir2_data_free_t	*dfp;		/* bestfree entry */
 	xfs_dir2_data_aoff_t	off;		/* offset value needed */
-#ifdef DEBUG
-	int			matched;	/* matched the value */
-	int			seenzero;	/* saw a 0 bestfree entry */
-#endif
 
 	off = (xfs_dir2_data_aoff_t)((char *)dup - (char *)hdr);
 
-#ifdef DEBUG
-	/*
-	 * Validate some consistency in the bestfree table.
-	 * Check order, non-overlapping entries, and if we find the
-	 * one we're looking for it has to be exact.
-	 */
-	ASSERT(hdr->magic == cpu_to_be32(XFS_DIR2_DATA_MAGIC) ||
-	       hdr->magic == cpu_to_be32(XFS_DIR3_DATA_MAGIC) ||
-	       hdr->magic == cpu_to_be32(XFS_DIR2_BLOCK_MAGIC) ||
-	       hdr->magic == cpu_to_be32(XFS_DIR3_BLOCK_MAGIC));
-	for (dfp = &bf[0], seenzero = matched = 0;
-	     dfp < &bf[XFS_DIR2_DATA_FD_COUNT];
-	     dfp++) {
-		if (!dfp->offset) {
-			ASSERT(!dfp->length);
-			seenzero = 1;
-			continue;
-		}
-		ASSERT(seenzero == 0);
-		if (be16_to_cpu(dfp->offset) == off) {
-			matched = 1;
-			ASSERT(dfp->length == dup->length);
-		} else if (off < be16_to_cpu(dfp->offset))
-			ASSERT(off + be16_to_cpu(dup->length) <= be16_to_cpu(dfp->offset));
-		else
-			ASSERT(be16_to_cpu(dfp->offset) + be16_to_cpu(dfp->length) <= off);
-		ASSERT(matched || be16_to_cpu(dfp->length) >= be16_to_cpu(dup->length));
-		if (dfp > &bf[0])
-			ASSERT(be16_to_cpu(dfp[-1].length) >= be16_to_cpu(dfp[0].length));
-	}
-#endif
 	/*
 	 * If this is smaller than the smallest bestfree entry,
 	 * it can't be there since they're sorted.
