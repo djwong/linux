@@ -1980,7 +1980,8 @@ xfs_btree_lookup(
 			high = xfs_btree_get_numrecs(block);
 			if (!high) {
 				/* Block is empty, must be an empty leaf. */
-				ASSERT(level == 0 && cur->bc_nlevels == 1);
+				if (level != 0 || cur->bc_nlevels != 1)
+					return -EFSCORRUPTED;
 
 				cur->bc_ptrs[0] = dir != XFS_LOOKUP_LE;
 				XFS_BTREE_TRACE_CURSOR(cur, XBT_EXIT);
