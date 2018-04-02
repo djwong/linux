@@ -1810,6 +1810,7 @@ static const struct super_operations xfs_super_operations = {
 	.free_cached_objects	= xfs_fs_free_cached_objects,
 	.freeze_super		= xfs_fs_freeze_super,
 	.thaw_super		= xfs_fs_thaw_super,
+	.check_bdev_write	= blkdev_deny_bdev_write,
 };
 
 static struct file_system_type xfs_fs_type = {

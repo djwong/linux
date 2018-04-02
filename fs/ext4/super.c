@@ -846,6 +846,40 @@ static void dump_orphan_list(struct super_block *sb, struct ext4_sb_info *sbi)
 	}
 }
 
+/*
+ * Deny all writes to the block device except for the superblocks, since
+ * tune2fs will modify them while we're mounted(!)
+ */
+int ext4_check_bdev_write(struct super_block *sb, struct block_device *bdev,
+			  loff_t start, size_t len)
+{
+	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
+	ext4_grpblk_t first_cluster;
+	ext4_grpblk_t last_cluster;
+	ext4_fsblk_t start_fsb;
+	ext4_fsblk_t last_fsb;
+	ext4_group_t start_group;
+	ext4_group_t last_group;
+
+	start_fsb = start >> sb->s_blocksize_bits;
+	ext4_get_group_no_and_offset(sb, start_fsb, &start_group,
+				     &first_cluster);
+
+	last_fsb = (start + len - 1) >> sb->s_blocksize_bits;
+	ext4_get_group_no_and_offset(sb, last_fsb, &last_group, &last_cluster);
+
+	if (start >= EXT4_MIN_BLOCK_SIZE &&
+	    start + len >= EXT4_MIN_BLOCK_SIZE &&
+	    start_fsb >= le32_to_cpu(es->s_first_data_block) &&
+	    ext4_bg_has_super(sb, start_group) &&
+	    start_group == last_group &&
+	    first_cluster == 0 &&
+	    first_cluster == last_cluster)
+		return 0;
+
+	return -EPERM;
+}
+
 #ifdef CONFIG_QUOTA
 static int ext4_quota_off(struct super_block *sb, int type);
 
@@ -1323,6 +1357,7 @@ static const struct super_operations ext4_sops = {
 	.get_dquots	= ext4_get_dquots,
 #endif
 	.bdev_try_to_free_page = bdev_try_to_free_page,
+	.check_bdev_write = ext4_check_bdev_write,
 };
 
 static const struct export_operations ext4_export_ops = {

@@ -1875,6 +1875,21 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	return blkdev_ioctl(bdev, mode, cmd, arg);
 }
 
+static int blkdev_check_bdev_write(struct block_device *bdev, loff_t pos,
+				   size_t len)
+{
+	struct super_block *sb = get_super(bdev);
+	int ret = 0;
+
+	if (!sb)
+		return 0;
+
+	if (sb->s_op && sb->s_op->check_bdev_write)
+		ret = sb->s_op->check_bdev_write(sb, bdev, pos, len);
+	drop_super(sb);
+	return ret;
+}
+
 /*
  * Write data to the block device.  Only intended for the block device itself
  * and the raw driver which basically is a fake block device.
@@ -1886,11 +1901,12 @@ ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *bd_inode = bdev_file_inode(file);
+	struct block_device *bdev = I_BDEV(bd_inode);
 	loff_t size = i_size_read(bd_inode);
 	struct blk_plug plug;
 	ssize_t ret;
 
-	if (bdev_read_only(I_BDEV(bd_inode)))
+	if (bdev_read_only(bdev))
 		return -EPERM;
 
 	if (!iov_iter_count(from))
@@ -1901,6 +1917,10 @@ ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	if ((iocb->ki_flags & (IOCB_NOWAIT | IOCB_DIRECT)) == IOCB_NOWAIT)
 		return -EOPNOTSUPP;
+
+	ret = blkdev_check_bdev_write(bdev, iocb->ki_pos, iov_iter_count(from));
+	if (ret)
+		return ret;
 
 	iov_iter_truncate(from, size - iocb->ki_pos);
 
@@ -2001,6 +2021,10 @@ static long blkdev_fallocate(struct file *file, int mode, loff_t start,
 	if ((start | len) & (bdev_logical_block_size(bdev) - 1))
 		return -EINVAL;
 
+	error = blkdev_check_bdev_write(bdev, start, len - start);
+	if (error)
+		return error;
+
 	/* Invalidate the page cache, including dirty pages. */
 	mapping = bdev->bd_inode->i_mapping;
 	truncate_inode_pages_range(mapping, start, end);
@@ -2035,20 +2059,57 @@ static long blkdev_fallocate(struct file *file, int mode, loff_t start,
 					     end >> PAGE_SHIFT);
 }
 
+static int blkdev_file_mmap(struct file * file, struct vm_area_struct * vma)
+{
+	struct inode *bd_inode = bdev_file_inode(file);
+	struct block_device *bdev = I_BDEV(bd_inode);
+	int ret;
+
+	if ((vma->vm_flags & VM_SHARED) && (vma->vm_flags & VM_MAYWRITE)) {
+		ret = blkdev_check_bdev_write(bdev, vma->vm_pgoff,
+					      vma->vm_end - vma->vm_start);
+		if (ret)
+			return ret;
+	}
+	return generic_file_mmap(file, vma);
+}
+
+static ssize_t
+blkdev_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
+			 loff_t *ppos, size_t len, unsigned int flags)
+{
+	struct inode *bd_inode = bdev_file_inode(out);
+	struct block_device *bdev = I_BDEV(bd_inode);
+	int ret;
+
+	ret = blkdev_check_bdev_write(bdev, *ppos, len);
+	if (ret)
+		return ret;
+
+	return iter_file_splice_write(pipe, out, ppos, len, flags);
+}
+
+int blkdev_deny_bdev_write(struct super_block *sb, struct block_device *bdev,
+			   loff_t start, size_t len)
+{
+	return -EPERM;
+}
+EXPORT_SYMBOL_GPL(blkdev_deny_bdev_write);
+
 const struct file_operations def_blk_fops = {
 	.open		= blkdev_open,
 	.release	= blkdev_close,
 	.llseek		= block_llseek,
 	.read_iter	= blkdev_read_iter,
 	.write_iter	= blkdev_write_iter,
-	.mmap		= generic_file_mmap,
+	.mmap		= blkdev_file_mmap,
 	.fsync		= blkdev_fsync,
 	.unlocked_ioctl	= block_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= compat_blkdev_ioctl,
 #endif
 	.splice_read	= generic_file_splice_read,
-	.splice_write	= iter_file_splice_write,
+	.splice_write	= blkdev_file_splice_write,
 	.fallocate	= blkdev_fallocate,
 };
 

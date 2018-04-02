@@ -1842,6 +1842,8 @@ struct super_operations {
 				  struct shrink_control *);
 	long (*free_cached_objects)(struct super_block *,
 				    struct shrink_control *);
+	int (*check_bdev_write)(struct super_block *, struct block_device *,
+				loff_t, size_t);
 };
 
 /*

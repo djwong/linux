@@ -2109,6 +2109,10 @@ static inline bool blk_req_can_dispatch_to_zone(struct request *rq)
 }
 #endif /* CONFIG_BLK_DEV_ZONED */
 
+extern int blkdev_deny_bdev_write(struct super_block *sb,
+				  struct block_device *bdev,
+				  loff_t start, size_t len);
+
 #else /* CONFIG_BLOCK */
 
 struct block_device;
